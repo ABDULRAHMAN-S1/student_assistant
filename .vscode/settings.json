@@ -1,0 +1,39 @@
+{
+  // ===== Editor =====
+  "editor.fontSize": 14,
+  "editor.tabSize": 2,
+  "editor.insertSpaces": true,
+  "editor.formatOnSave": true,
+  "editor.codeActionsOnSave": {
+    "source.fixAll": "always",
+    "source.organizeImports": "always"
+  },
+  // ===== Dart & Flutter =====
+  "dart.lineLength": 80,
+  "dart.previewFlutterUiGuides": true,
+  "dart.openDevTools": "flutter",
+  "dart.flutterHotReloadOnSave": "all",
+  // ===== Files =====
+  "files.autoSave": "onFocusChange",
+  "files.exclude": {
+    "**/.dart_tool": true,
+    "**/.idea": true,
+    "**/build": true
+  },
+  // ===== Formatting =====
+  "[dart]": {
+    "editor.defaultFormatter": "Dart-Code.dart-code",
+    "editor.formatOnSave": true
+  },
+  // ===== Git =====
+  "git.enableSmartCommit": true,
+  "git.autofetch": true,
+  // ===== Explorer =====
+  "explorer.confirmDelete": false,
+  "explorer.confirmDragAndDrop": false,
+  // ===== Terminal =====
+  "terminal.integrated.defaultProfile.windows": "Command Prompt",
+  // ===== UI Cleanliness =====
+  "workbench.iconTheme": "material-icon-theme",
+  "editor.minimap.enabled": false
+}

@@ -1,0 +1,10 @@
+{
+  "recommendations": [
+    "Dart-Code.flutter",
+    "Dart-Code.dart-code",
+    "eamodio.gitlens",
+    "usernamehw.errorlens",
+    "esbenp.prettier-vscode",
+    "PKief.material-icon-theme"
+  ]
+}
