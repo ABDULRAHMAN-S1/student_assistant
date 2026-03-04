@@ -1,12 +1,12 @@
 import 'package:flutter/material.dart';
 
+import 'services/ai_chat_page.dart';
 import 'courses_page.dart';
 import 'custom_dialog.dart';
 import 'custom_toast.dart';
 import 'events_page.dart';
 import 'login_page.dart';
 import 'reviews_page.dart';
-import 'services/ai_chat_page.dart';
 
 class AppColors {
   static const background = Color(0xFFFBF4FC);
@@ -274,6 +274,7 @@ class _HomePageState extends State<HomePage> {
         isArabic: _isArabic,
         isGuest: widget.isGuest,
         notifCount: 3,
+        accentColor: accent,
         onLogin: () => _showLoginDialog(_isArabic ? 'حسابك' : 'Your Account'),
         onLanguage: _toggleLanguage,
         onNotifications: () =>
@@ -363,13 +364,13 @@ class TaibahWelcomeCard extends StatelessWidget {
           const SizedBox(width: 16),
           Expanded(
             child: Column(
-              crossAxisAlignment: CrossAxisAlignment.end,
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
                   isArabic
                       ? 'مرحبًا بطلاب جامعة طيبة'
                       : 'Welcome Taibah Students',
-                  textAlign: TextAlign.right,
+                  textAlign: TextAlign.left,
                   style: const TextStyle(
                     color: Colors.white,
                     fontSize: 18,
@@ -381,7 +382,7 @@ class TaibahWelcomeCard extends StatelessWidget {
                   isArabic
                       ? 'اختر خدمتك التعليمية الخاصة بك'
                       : 'Choose your educational service',
-                  textAlign: TextAlign.right,
+                  textAlign: TextAlign.left,
                   style: const TextStyle(
                     color: Color(0xEFFFFFFF),
                     fontSize: 13.5,
@@ -397,7 +398,7 @@ class TaibahWelcomeCard extends StatelessWidget {
   }
 }
 
-class FeatureCard extends StatelessWidget {
+class FeatureCard extends StatefulWidget {
   final IconData icon;
   final Color color;
   final String title;
@@ -416,45 +417,73 @@ class FeatureCard extends StatelessWidget {
   });
 
   @override
+  State<FeatureCard> createState() => _FeatureCardState();
+}
+
+class _FeatureCardState extends State<FeatureCard> {
+  bool _isPressed = false;
+
+  @override
   Widget build(BuildContext context) {
-    return Material(
-      color: AppColors.card,
-      borderRadius: BorderRadius.circular(18),
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(18),
-        child: Container(
-          padding: const EdgeInsets.all(14),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(18),
-            border: Border.all(color: AppColors.border),
-            boxShadow: const [
-              BoxShadow(
-                color: Color(0x0F000000),
-                blurRadius: 7,
-                offset: Offset(0, 4),
-              ),
-            ],
+    return GestureDetector(
+      onTapDown: (_) => setState(() => _isPressed = true),
+      onTapUp: (_) => setState(() => _isPressed = false),
+      onTapCancel: () => setState(() => _isPressed = false),
+      onTap: widget.onTap,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 150),
+        curve: Curves.easeInOut,
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: _isPressed
+              ? widget.color.withValues(alpha: 0.1)
+              : AppColors.card,
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(
+            color: _isPressed ? widget.color : AppColors.border,
+            width: _isPressed ? 2 : 1,
           ),
+          boxShadow: [
+            BoxShadow(
+              color: _isPressed
+                  ? widget.color.withValues(alpha: 0.3)
+                  : const Color(0x0F000000),
+              blurRadius: _isPressed ? 15 : 7,
+              offset: Offset(0, _isPressed ? 8 : 4),
+            ),
+          ],
+        ),
+        child: Transform.scale(
+          scale: _isPressed ? 0.98 : 1.0,
           child: Row(
             children: [
-              Container(
+              AnimatedContainer(
+                duration: const Duration(milliseconds: 150),
                 width: 54,
                 height: 54,
                 decoration: BoxDecoration(
-                  color: color,
+                  color: widget.color,
                   borderRadius: BorderRadius.circular(16),
+                  boxShadow: _isPressed
+                      ? [
+                          BoxShadow(
+                            color: widget.color.withValues(alpha: 0.5),
+                            blurRadius: 10,
+                            offset: const Offset(0, 4),
+                          ),
+                        ]
+                      : null,
                 ),
-                child: Icon(icon, color: Colors.white, size: 26),
+                child: Icon(widget.icon, color: Colors.white, size: 26),
               ),
               const SizedBox(width: 12),
               Expanded(
                 child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.end,
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      title,
-                      textAlign: TextAlign.right,
+                      widget.title,
+                      textAlign: TextAlign.left,
                       style: const TextStyle(
                         fontSize: 18,
                         fontWeight: FontWeight.w900,
@@ -462,18 +491,18 @@ class FeatureCard extends StatelessWidget {
                     ),
                     const SizedBox(height: 6),
                     Text(
-                      actionText,
-                      textAlign: TextAlign.right,
+                      widget.actionText,
+                      textAlign: TextAlign.left,
                       style: TextStyle(
                         fontSize: 14,
                         fontWeight: FontWeight.w900,
-                        color: color,
+                        color: widget.color,
                       ),
                     ),
                     const SizedBox(height: 10),
                     Text(
-                      description,
-                      textAlign: TextAlign.right,
+                      widget.description,
+                      textAlign: TextAlign.left,
                       style: const TextStyle(
                         fontSize: 13,
                         color: AppColors.mutedText,
@@ -498,6 +527,7 @@ class _TopBar extends StatelessWidget implements PreferredSizeWidget {
   final VoidCallback onLanguage;
   final VoidCallback onNotifications;
   final VoidCallback? onLogout;
+  final Color accentColor;
 
   const _TopBar({
     required this.isArabic,
@@ -507,6 +537,7 @@ class _TopBar extends StatelessWidget implements PreferredSizeWidget {
     required this.onLanguage,
     required this.onNotifications,
     this.onLogout,
+    required this.accentColor,
   });
 
   @override
@@ -514,20 +545,21 @@ class _TopBar extends StatelessWidget implements PreferredSizeWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Directionality(
-      textDirection: isArabic ? TextDirection.rtl : TextDirection.ltr,
-      child: AppBar(
-        backgroundColor: AppColors.card,
-        surfaceTintColor: Colors.transparent,
-        elevation: 0,
-        titleSpacing: 0,
-        automaticallyImplyLeading: false,
-        flexibleSpace: SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 8),
+    return AppBar(
+      backgroundColor: AppColors.card,
+      surfaceTintColor: Colors.transparent,
+      elevation: 0,
+      titleSpacing: 0,
+      automaticallyImplyLeading: false,
+      flexibleSpace: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 8),
+          // ✅ FORCE LTR: Icon left, Text right (like Courses page)
+          child: Directionality(
+            textDirection: TextDirection.ltr,
             child: Row(
               children: [
-                // Icons side
+                // LEFT: Icons
                 Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
@@ -551,21 +583,42 @@ class _TopBar extends StatelessWidget implements PreferredSizeWidget {
                     const SizedBox(width: 6),
                     _buildIconButton(
                       icon: Icons.person_outline,
-                      isGradient: true,
                       onTap: onLogin,
+                      color: accentColor,
                     ),
                   ],
                 ),
 
                 const Spacer(),
 
-                // Title side
+                // RIGHT: Logo + Text (next to each other)
                 Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
+                    // Logo
+                    Container(
+                      width: 38,
+                      height: 38,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        gradient: LinearGradient(
+                          colors: [
+                            accentColor,
+                            accentColor.withValues(alpha: 0.8),
+                          ],
+                        ),
+                      ),
+                      child: const Icon(
+                        Icons.school,
+                        color: Colors.white,
+                        size: 20,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    // Text next to logo
                     Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
                       mainAxisAlignment: MainAxisAlignment.center,
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
                           isArabic ? 'مساعدة الطلاب' : 'Student Assistant',
@@ -600,31 +653,13 @@ class _TopBar extends StatelessWidget implements PreferredSizeWidget {
                             isArabic
                                 ? 'منصتك التعليمية الذكية'
                                 : 'Your Smart Learning Platform',
-                            style: const TextStyle(
+                            style: TextStyle(
                               fontSize: 11,
                               fontWeight: FontWeight.w600,
-                              color: AppColors.mutedText,
+                              color: accentColor,
                             ),
                           ),
                       ],
-                    ),
-                    const SizedBox(width: 8),
-                    Container(
-                      width: 38,
-                      height: 38,
-                      decoration: const BoxDecoration(
-                        shape: BoxShape.circle,
-                        gradient: LinearGradient(
-                          colors: [AppColors.gradBlue, AppColors.gradPurple],
-                          begin: Alignment.topLeft,
-                          end: Alignment.bottomRight,
-                        ),
-                      ),
-                      child: const Icon(
-                        Icons.school,
-                        color: Colors.white,
-                        size: 20,
-                      ),
                     ),
                   ],
                 ),
@@ -639,20 +674,21 @@ class _TopBar extends StatelessWidget implements PreferredSizeWidget {
   Widget _buildIconButton({
     required IconData icon,
     required VoidCallback onTap,
-    bool isGradient = false,
     int count = 0,
+    Color? color,
   }) {
+    final useAccent = color != null;
     return InkWell(
       onTap: onTap,
       customBorder: const CircleBorder(),
       child: Container(
         width: 38,
         height: 38,
-        decoration: isGradient
-            ? const BoxDecoration(
+        decoration: useAccent
+            ? BoxDecoration(
                 shape: BoxShape.circle,
                 gradient: LinearGradient(
-                  colors: [AppColors.gradBlue, AppColors.gradPurple],
+                  colors: [color, color.withValues(alpha: 0.8)],
                 ),
               )
             : BoxDecoration(
@@ -666,7 +702,7 @@ class _TopBar extends StatelessWidget implements PreferredSizeWidget {
                   Center(
                     child: Icon(
                       icon,
-                      color: isGradient ? Colors.white : AppColors.primaryText,
+                      color: useAccent ? Colors.white : AppColors.primaryText,
                       size: 20,
                     ),
                   ),
@@ -687,7 +723,7 @@ class _TopBar extends StatelessWidget implements PreferredSizeWidget {
             : Center(
                 child: Icon(
                   icon,
-                  color: isGradient ? Colors.white : AppColors.primaryText,
+                  color: useAccent ? Colors.white : AppColors.primaryText,
                   size: 20,
                 ),
               ),

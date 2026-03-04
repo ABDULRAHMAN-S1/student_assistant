@@ -13,9 +13,9 @@ class EventsPage extends StatefulWidget {
 }
 
 class _EventsPageState extends State<EventsPage> {
-  final Color _primaryCyan = const Color(0xFF26C6DA);
-  final Color _secondaryBlue = const Color(0xFF4DD0E1);
-  final Color _accentPurple = const Color(0xFF00ACC1);
+  final Color _primaryCyan = const Color(0xFFE4008D); // Pink
+  final Color _secondaryBlue = const Color(0xFFFF1493); // Hot pink
+  final Color _accentPurple = const Color(0xFFC2185B); // Dark pink
 
   final List<Map<String, dynamic>> _events = [
     {

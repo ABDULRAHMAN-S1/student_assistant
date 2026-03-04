@@ -17,9 +17,10 @@ class _AIChatPageState extends State<AIChatPage> {
   final List<ChatMessage> _messages = [];
   bool _isTyping = false;
 
-  final Color _primaryCyan = const Color(0xFF26C6DA);
-  final Color _secondaryBlue = const Color(0xFF4DD0E1);
-  final Color _accentPurple = const Color(0xFF00ACC1);
+  // ✅ فقط تم تغيير الألوان هنا لتطابق البنفسجي الموجود بالصورة
+  final Color _primaryCyan = const Color(0xFF5421D9);
+  final Color _secondaryBlue = const Color(0xFF6D0FE0);
+  final Color _accentPurple = const Color(0xFF3F2ABF);
 
   @override
   void initState() {

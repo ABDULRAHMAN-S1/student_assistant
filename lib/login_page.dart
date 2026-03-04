@@ -1,12 +1,21 @@
 import 'package:flutter/material.dart';
 
 import "create_account_screen.dart";
+import 'forgot_password_screen.dart';
 
 class LoginPage extends StatefulWidget {
   final bool isArabic;
   final VoidCallback? onLoginSuccess;
+  final VoidCallback? onToggleLanguage;
+  final void Function({bool asGuest})? onDone;
 
-  const LoginPage({super.key, required this.isArabic, this.onLoginSuccess});
+  const LoginPage({
+    super.key,
+    required this.isArabic,
+    this.onLoginSuccess,
+    this.onToggleLanguage,
+    this.onDone,
+  });
 
   @override
   State<LoginPage> createState() => _LoginPageState();
@@ -25,6 +34,11 @@ class _LoginPageState extends State<LoginPage> {
     super.dispose();
   }
 
+  // ✅ SIMPLE POP - GOES BACK TO WELCOME
+  void _goBack() {
+    Navigator.pop(context);
+  }
+
   @override
   Widget build(BuildContext context) {
     final isAr = widget.isArabic;
@@ -36,6 +50,14 @@ class _LoginPageState extends State<LoginPage> {
         appBar: AppBar(
           backgroundColor: Colors.transparent,
           elevation: 0,
+          leading: IconButton(
+            icon: Icon(
+              isAr ? Icons.arrow_forward_rounded : Icons.arrow_back_rounded,
+              color: Colors.black87,
+            ),
+            onPressed: _goBack, // ✅ Just pop back
+            tooltip: isAr ? 'رجوع' : 'Back',
+          ),
           title: Text(isAr ? 'تسجيل الدخول' : 'Login'),
           centerTitle: true,
         ),
@@ -157,9 +179,22 @@ class _LoginPageState extends State<LoginPage> {
                           ),
                         ),
                         TextButton(
-                          onPressed: () {},
+                          onPressed: () {
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (_) =>
+                                    ForgotPasswordScreen(isArabic: isAr),
+                              ),
+                            );
+                          },
                           child: Text(
-                            isAr ? 'نسيت كلمة المرور؟' : 'Forgot password?',
+                            isAr ? 'نسيت كلمة السر؟' : 'Forgot password?',
+                            style: const TextStyle(
+                              color: Color(0xFF7C3AED),
+                              fontSize: 12,
+                              fontWeight: FontWeight.w700,
+                            ),
                           ),
                         ),
                       ],
@@ -221,12 +256,15 @@ class _LoginPageState extends State<LoginPage> {
                         ),
                         TextButton(
                           onPressed: () {
+                            // ✅ USE PUSH (keeps Login in stack)
                             Navigator.push(
                               context,
                               MaterialPageRoute(
                                 builder: (context) => CreateAccountScreen(
                                   isArabic: isAr,
                                   onRegisterSuccess: widget.onLoginSuccess,
+                                  onToggleLanguage: widget.onToggleLanguage,
+                                  onDone: widget.onDone,
                                 ),
                               ),
                             );

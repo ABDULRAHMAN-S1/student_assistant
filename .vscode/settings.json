@@ -14,7 +14,7 @@
   "dart.openDevTools": "flutter",
   "dart.flutterHotReloadOnSave": "all",
   // ===== Files =====
-  "files.autoSave": "onFocusChange",
+  "files.autoSave": "afterDelay",
   "files.exclude": {
     "**/.dart_tool": true,
     "**/.idea": true,

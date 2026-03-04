@@ -10,9 +10,9 @@ class ReviewsPage extends StatefulWidget {
 }
 
 class _ReviewsPageState extends State<ReviewsPage> {
-  final Color _primaryCyan = const Color(0xFF26C6DA);
-  final Color _secondaryBlue = const Color(0xFF4DD0E1);
-  final Color _accentPurple = const Color(0xFF00ACC1);
+  final Color _primaryCyan = const Color(0xFFFF8A00); // Orange
+  final Color _secondaryBlue = const Color(0xFFFFA726); // Light orange
+  final Color _accentPurple = const Color(0xFFE65100); // Dark orange
 
   final List<Map<String, dynamic>> _reviews = [
     {

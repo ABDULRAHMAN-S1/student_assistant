@@ -97,13 +97,16 @@ class _WelcomeScreenState extends State<WelcomeScreen> {
                           icon: Icons.login,
                           colors: const [Color(0xFF764BA2), Color(0xFF9B59B6)],
                           onPressed: () {
-                            Navigator.pushReplacement(
+                            // ✅ USE PUSH (keeps Welcome in stack)
+                            Navigator.push(
                               context,
                               MaterialPageRoute(
                                 builder: (context) => LoginPage(
                                   isArabic: widget.isArabic,
                                   onLoginSuccess: () =>
                                       widget.onDone(asGuest: false),
+                                  onToggleLanguage: widget.onToggleLanguage,
+                                  onDone: widget.onDone,
                                 ),
                               ),
                             );
@@ -115,13 +118,16 @@ class _WelcomeScreenState extends State<WelcomeScreen> {
                           icon: Icons.person_add_outlined,
                           colors: const [Color(0xFF00B4DB), Color(0xFF0083B0)],
                           onPressed: () {
-                            Navigator.pushReplacement(
+                            // ✅ USE PUSH (keeps Welcome in stack)
+                            Navigator.push(
                               context,
                               MaterialPageRoute(
                                 builder: (context) => CreateAccountScreen(
                                   isArabic: widget.isArabic,
                                   onRegisterSuccess: () =>
                                       widget.onDone(asGuest: false),
+                                  onToggleLanguage: widget.onToggleLanguage,
+                                  onDone: widget.onDone,
                                 ),
                               ),
                             );

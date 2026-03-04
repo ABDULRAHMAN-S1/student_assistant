@@ -10,9 +10,9 @@ class CoursesPage extends StatefulWidget {
 }
 
 class _CoursesPageState extends State<CoursesPage> {
-  final Color _primaryCyan = const Color(0xFF26C6DA);
-  final Color _secondaryBlue = const Color(0xFF4DD0E1);
-  final Color _accentPurple = const Color(0xFF00ACC1);
+  final Color _primaryCyan = const Color(0xFF00B35A); // Green
+  final Color _secondaryBlue = const Color(0xFF00C853); // Light green
+  final Color _accentPurple = const Color(0xFF009624); // Dark green
 
   final List<Map<String, dynamic>> _courses = [
     {
