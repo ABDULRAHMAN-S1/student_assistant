@@ -15,3 +15,24 @@ x86/
 *.[Cc]ache
 # but keep track of directories ending in .cache
 !*.[Cc]ache/
+# Node
+node_modules/
+npm-debug.log*
+
+# Flutter
+.dart_tool/
+build/
+.flutter-plugins
+.flutter-plugins-dependencies
+
+# Python / Django
+__pycache__/
+*.pyc
+venv/
+.env
+
+# Android
+android/.gradle/
+
+# iOS
+ios/Pods/
