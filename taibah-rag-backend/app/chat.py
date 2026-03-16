@@ -1456,6 +1456,7 @@ def answer_question(question: str, top_k: int = 4) -> dict[str, Any]:
             "article": item["metadata"].get("article"),
             "title": item["metadata"].get("title"),
             "score": item["score"],
+            "content": item["content"],
             "content_preview": truncate_text(item["content"], 260),
         }
         for item in source_contexts

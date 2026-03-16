@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 
 import 'ai_api.dart';
+import 'ai_chat_storage.dart';
+import 'regulation_search_page.dart';
 
 class AIChatPage extends StatefulWidget {
   final bool isArabic;
@@ -16,23 +18,78 @@ class _AIChatPageState extends State<AIChatPage> {
   final ScrollController _scrollController = ScrollController();
   final List<ChatMessage> _messages = [];
   bool _isTyping = false;
+  bool _isLoadingHistory = true;
 
-  // ✅ فقط تم تغيير الألوان هنا لتطابق البنفسجي الموجود بالصورة
   final Color _primaryCyan = const Color(0xFF5421D9);
   final Color _secondaryBlue = const Color(0xFF6D0FE0);
   final Color _accentPurple = const Color(0xFF3F2ABF);
 
+  List<String> get _suggestedQuestions => widget.isArabic
+      ? const [
+          'ما عقوبة الغش في الاختبار؟',
+          'هل يسمح بتصوير المحاضرات؟',
+          'ما شروط السكن الجامعي؟',
+          'ماذا يحدث إذا غبت عن الاختبار النهائي؟',
+        ]
+      : const [
+          'What happens if a student misses a final exam?',
+          'Can I withdraw from a course?',
+          'Is smoking allowed on campus?',
+          'What are the housing conditions?',
+        ];
+
   @override
   void initState() {
     super.initState();
-    _addBotMessage(
-      widget.isArabic
-          ? 'مرحباً! 👋 أنا مساعدك الذكي. كيف يمكنني مساعدتك اليوم؟'
-          : 'Hello! 👋 I\'m your AI assistant. How can I help you today?',
+    _initializeChat();
+  }
+
+  Future<void> _initializeChat() async {
+    final storedHistory = await AiChatStorage.loadHistory(
+      isArabic: widget.isArabic,
+    );
+    if (!mounted) return;
+
+    setState(() {
+      _messages.clear();
+      if (storedHistory.isEmpty) {
+        _messages.add(
+          ChatMessage(
+            text: widget.isArabic
+                ? 'مرحباً! 👋 أنا مساعدك الذكي. كيف يمكنني مساعدتك اليوم؟'
+                : 'Hello! 👋 I\'m your AI assistant. How can I help you today?',
+            isUser: false,
+            timestamp: DateTime.now(),
+            canFeedback: false,
+          ),
+        );
+      } else {
+        _messages.addAll(storedHistory.map(ChatMessage.fromMap));
+      }
+      _isLoadingHistory = false;
+    });
+
+    await _persistHistory();
+    _scrollToBottom();
+  }
+
+  Future<void> _persistHistory() async {
+    await AiChatStorage.saveHistory(
+      isArabic: widget.isArabic,
+      messages: _messages.map((message) => message.toMap()).toList(),
     );
   }
 
-  void _addBotMessage(String text, {List<String> sources = const []}) {
+  bool get _showSuggestedQuestions =>
+      !_isLoadingHistory &&
+      !_isTyping &&
+      _messages.where((message) => message.isUser).isEmpty;
+
+  void _addBotMessage(
+    String text, {
+    List<AiSourceReference> sources = const [],
+    bool canFeedback = false,
+  }) {
     setState(() {
       _messages.add(
         ChatMessage(
@@ -40,16 +97,18 @@ class _AIChatPageState extends State<AIChatPage> {
           isUser: false,
           timestamp: DateTime.now(),
           sources: sources,
+          canFeedback: canFeedback,
         ),
       );
     });
+    _persistHistory();
     _scrollToBottom();
   }
 
-  Future<void> _sendMessage() async {
+  Future<void> _sendMessage({String? presetText}) async {
     if (_isTyping) return;
 
-    final text = _messageController.text.trim();
+    final text = (presetText ?? _messageController.text).trim();
     if (text.isEmpty) return;
 
     setState(() {
@@ -60,6 +119,7 @@ class _AIChatPageState extends State<AIChatPage> {
     });
 
     _messageController.clear();
+    await _persistHistory();
     _scrollToBottom();
 
     try {
@@ -73,11 +133,8 @@ class _AIChatPageState extends State<AIChatPage> {
                   ? "ما قدرت أطلع جواب."
                   : "I couldn't generate an answer.")
             : response.answer,
-        sources: response.sources
-            .map((source) => source.toDisplayString())
-            .where((source) => source.isNotEmpty)
-            .take(2)
-            .toList(growable: false),
+        sources: response.sources,
+        canFeedback: response.sources.isNotEmpty,
       );
     } catch (e) {
       if (!mounted) return;
@@ -89,6 +146,169 @@ class _AIChatPageState extends State<AIChatPage> {
             : "Connection error: ${e.toString()}",
       );
     }
+  }
+
+  Future<void> _clearHistory() async {
+    final shouldClear = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(widget.isArabic ? 'مسح المحادثة' : 'Clear Chat'),
+        content: Text(
+          widget.isArabic
+              ? 'هل تريد حذف سجل المحادثة الحالي؟'
+              : 'Do you want to delete the current chat history?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: Text(widget.isArabic ? 'إلغاء' : 'Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: Text(widget.isArabic ? 'مسح' : 'Clear'),
+          ),
+        ],
+      ),
+    );
+
+    if (shouldClear != true || !mounted) return;
+
+    await AiChatStorage.clearHistory(isArabic: widget.isArabic);
+    setState(() {
+      _messages
+        ..clear()
+        ..add(
+          ChatMessage(
+            text: widget.isArabic
+                ? 'مرحباً! 👋 أنا مساعدك الذكي. كيف يمكنني مساعدتك اليوم؟'
+                : 'Hello! 👋 I\'m your AI assistant. How can I help you today?',
+            isUser: false,
+            timestamp: DateTime.now(),
+            canFeedback: false,
+          ),
+        );
+    });
+    await _persistHistory();
+  }
+
+  Future<void> _openSearchPage() async {
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => RegulationSearchPage(isArabic: widget.isArabic),
+      ),
+    );
+  }
+
+  String _questionForMessage(ChatMessage message) {
+    final messageIndex = _messages.indexOf(message);
+    if (messageIndex <= 0) {
+      return '';
+    }
+
+    for (int index = messageIndex - 1; index >= 0; index--) {
+      final candidate = _messages[index];
+      if (candidate.isUser) {
+        return candidate.text;
+      }
+    }
+    return '';
+  }
+
+  Future<void> _submitFeedback(ChatMessage message, bool helpful) async {
+    if (!message.canFeedback) return;
+
+    final messageIndex = _messages.indexOf(message);
+    if (messageIndex < 0) return;
+
+    setState(() {
+      _messages[messageIndex] = message.copyWith(helpful: helpful);
+    });
+    await _persistHistory();
+
+    try {
+      await AiApi.sendFeedback(
+        question: _questionForMessage(message),
+        answer: message.text,
+        helpful: helpful,
+        language: widget.isArabic ? 'ar' : 'en',
+        sources: message.sources,
+      );
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            widget.isArabic
+                ? 'تعذر إرسال التقييم الآن.'
+                : 'Could not send feedback right now.',
+          ),
+        ),
+      );
+    }
+  }
+
+  void _showReferenceView(ChatMessage message) {
+    if (message.sources.isEmpty) return;
+
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      builder: (context) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: ListView.separated(
+            shrinkWrap: true,
+            itemCount: message.sources.length,
+            separatorBuilder: (_, _) => const SizedBox(height: 12),
+            itemBuilder: (context, index) {
+              final source = message.sources[index];
+              return Container(
+                padding: const EdgeInsets.all(14),
+                decoration: BoxDecoration(
+                  color: Colors.grey[50],
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(color: Colors.grey[300]!),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    if (source.article.isNotEmpty)
+                      Text(
+                        source.article,
+                        style: const TextStyle(
+                          fontWeight: FontWeight.bold,
+                          fontSize: 15,
+                        ),
+                      ),
+                    if (source.section.isNotEmpty) ...[
+                      const SizedBox(height: 6),
+                      Text(
+                        source.section,
+                        style: TextStyle(color: Colors.grey[700]),
+                      ),
+                    ],
+                    if (source.documentTitle.isNotEmpty) ...[
+                      const SizedBox(height: 4),
+                      Text(
+                        source.documentTitle,
+                        style: TextStyle(color: Colors.grey[600]),
+                      ),
+                    ],
+                    const SizedBox(height: 10),
+                    Text(
+                      source.content.isNotEmpty
+                          ? source.content
+                          : source.contentPreview,
+                      style: const TextStyle(height: 1.5),
+                    ),
+                  ],
+                ),
+              );
+            },
+          ),
+        ),
+      ),
+    );
   }
 
   void _scrollToBottom() {
@@ -111,7 +331,9 @@ class _AIChatPageState extends State<AIChatPage> {
         children: [
           _buildHeader(),
           Expanded(
-            child: _messages.isEmpty
+            child: _isLoadingHistory
+                ? const Center(child: CircularProgressIndicator())
+                : _messages.isEmpty
                 ? _buildEmptyState()
                 : ListView.builder(
                     controller: _scrollController,
@@ -122,6 +344,7 @@ class _AIChatPageState extends State<AIChatPage> {
                     },
                   ),
           ),
+          if (_showSuggestedQuestions) _buildSuggestedQuestions(),
           if (_isTyping) _buildTypingIndicator(),
           _buildInputArea(),
         ],
@@ -189,11 +412,50 @@ class _AIChatPageState extends State<AIChatPage> {
               ],
             ),
           ),
-          IconButton(
+          PopupMenuButton<String>(
             icon: const Icon(Icons.more_vert, color: Colors.white),
-            onPressed: () {},
+            onSelected: (value) {
+              if (value == 'search') {
+                _openSearchPage();
+              } else if (value == 'clear') {
+                _clearHistory();
+              }
+            },
+            itemBuilder: (context) => [
+              PopupMenuItem<String>(
+                value: 'search',
+                child: Text(
+                  widget.isArabic ? 'البحث في اللوائح' : 'Search regulations',
+                ),
+              ),
+              PopupMenuItem<String>(
+                value: 'clear',
+                child: Text(
+                  widget.isArabic ? 'مسح المحادثة' : 'Clear chat history',
+                ),
+              ),
+            ],
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildSuggestedQuestions() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
+      child: Wrap(
+        spacing: 8,
+        runSpacing: 8,
+        children: _suggestedQuestions
+            .map(
+              (question) => ActionChip(
+                label: Text(question),
+                onPressed: () => _sendMessage(presetText: question),
+              ),
+            )
+            .toList(growable: false),
       ),
     );
   }
@@ -310,6 +572,50 @@ class _AIChatPageState extends State<AIChatPage> {
                         ),
                       ),
                     ],
+                    if (!isUser &&
+                        (message.sources.isNotEmpty ||
+                            message.canFeedback)) ...[
+                      const SizedBox(height: 8),
+                      Wrap(
+                        spacing: 4,
+                        runSpacing: 4,
+                        children: [
+                          if (message.sources.isNotEmpty)
+                            TextButton(
+                              onPressed: () => _showReferenceView(message),
+                              child: Text(
+                                widget.isArabic
+                                    ? 'عرض المرجع الكامل'
+                                    : 'View full reference',
+                              ),
+                            ),
+                          if (message.canFeedback)
+                            IconButton(
+                              icon: Icon(
+                                Icons.thumb_up_alt_outlined,
+                                color: message.helpful == true
+                                    ? _primaryCyan
+                                    : Colors.grey[600],
+                              ),
+                              onPressed: () => _submitFeedback(message, true),
+                              tooltip: widget.isArabic ? 'مفيد' : 'Helpful',
+                            ),
+                          if (message.canFeedback)
+                            IconButton(
+                              icon: Icon(
+                                Icons.thumb_down_alt_outlined,
+                                color: message.helpful == false
+                                    ? Colors.redAccent
+                                    : Colors.grey[600],
+                              ),
+                              onPressed: () => _submitFeedback(message, false),
+                              tooltip: widget.isArabic
+                                  ? 'غير مفيد'
+                                  : 'Not helpful',
+                            ),
+                        ],
+                      ),
+                    ],
                   ],
                 ),
               ),
@@ -338,7 +644,7 @@ class _AIChatPageState extends State<AIChatPage> {
     }
 
     final label = widget.isArabic ? 'المرجع: ' : 'Source: ';
-    return '$label${message.sources.join('\n')}';
+    return '$label${message.sources.map((source) => source.toDisplayString()).take(2).join('\n')}';
   }
 
   Widget _buildTypingIndicator() {
@@ -474,12 +780,70 @@ class ChatMessage {
   final String text;
   final bool isUser;
   final DateTime timestamp;
-  final List<String> sources;
+  final List<AiSourceReference> sources;
+  final bool canFeedback;
+  final bool? helpful;
 
   ChatMessage({
     required this.text,
     required this.isUser,
     required this.timestamp,
     this.sources = const [],
+    this.canFeedback = false,
+    this.helpful,
   });
+
+  ChatMessage copyWith({
+    String? text,
+    bool? isUser,
+    DateTime? timestamp,
+    List<AiSourceReference>? sources,
+    bool? canFeedback,
+    bool? helpful,
+  }) {
+    return ChatMessage(
+      text: text ?? this.text,
+      isUser: isUser ?? this.isUser,
+      timestamp: timestamp ?? this.timestamp,
+      sources: sources ?? this.sources,
+      canFeedback: canFeedback ?? this.canFeedback,
+      helpful: helpful,
+    );
+  }
+
+  Map<String, dynamic> toMap() {
+    return {
+      'text': text,
+      'isUser': isUser,
+      'timestamp': timestamp.toIso8601String(),
+      'sources': sources
+          .map((source) => source.toJson())
+          .toList(growable: false),
+      'canFeedback': canFeedback,
+      'helpful': helpful,
+    };
+  }
+
+  factory ChatMessage.fromMap(Map<String, dynamic> map) {
+    final rawSources = map['sources'];
+    return ChatMessage(
+      text: (map['text'] ?? '').toString(),
+      isUser: map['isUser'] == true,
+      timestamp:
+          DateTime.tryParse((map['timestamp'] ?? '').toString()) ??
+          DateTime.now(),
+      sources: rawSources is List
+          ? rawSources
+                .whereType<Map>()
+                .map(
+                  (item) => AiSourceReference.fromJson(
+                    Map<String, dynamic>.from(item),
+                  ),
+                )
+                .toList(growable: false)
+          : const [],
+      canFeedback: map['canFeedback'] == true,
+      helpful: map['helpful'] is bool ? map['helpful'] as bool : null,
+    );
+  }
 }
