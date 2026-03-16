@@ -14,6 +14,7 @@ class RegulationSearchPage extends StatefulWidget {
 class _RegulationSearchPageState extends State<RegulationSearchPage> {
   final TextEditingController _controller = TextEditingController();
   bool _isLoading = false;
+  bool _hasSearched = false;
   List<AiSourceReference> _results = const [];
 
   Future<void> _search() async {
@@ -26,11 +27,15 @@ class _RegulationSearchPageState extends State<RegulationSearchPage> {
       if (!mounted) return;
       setState(() {
         _results = response.results;
+        _hasSearched = true;
         _isLoading = false;
       });
     } catch (_) {
       if (!mounted) return;
-      setState(() => _isLoading = false);
+      setState(() {
+        _isLoading = false;
+        _hasSearched = true;
+      });
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
@@ -135,9 +140,13 @@ class _RegulationSearchPageState extends State<RegulationSearchPage> {
             child: _results.isEmpty
                 ? Center(
                     child: Text(
-                      widget.isArabic
-                          ? 'أدخل عبارة للبحث في اللوائح.'
-                          : 'Enter a query to search the regulations.',
+                      _hasSearched
+                          ? (widget.isArabic
+                                ? 'لم أجد نتائج مطابقة في اللوائح.'
+                                : 'No matching regulation results were found.')
+                          : (widget.isArabic
+                                ? 'أدخل عبارة للبحث في اللوائح.'
+                                : 'Enter a query to search the regulations.'),
                     ),
                   )
                 : ListView.separated(

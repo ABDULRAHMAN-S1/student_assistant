@@ -72,12 +72,6 @@ def chat(request: ChatRequest) -> dict[str, object]:
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Internal error: {exc}") from exc
 
-
-@app.post("/ask")
-def ask(request: ChatRequest) -> dict[str, object]:
-    return chat(request)
-
-
 @app.post("/search")
 def regulation_search(request: SearchRequest) -> dict[str, object]:
     try:

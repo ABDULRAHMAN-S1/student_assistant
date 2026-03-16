@@ -92,6 +92,67 @@ Request:
 }
 ```
 
+## Search API
+
+```bash
+POST /search
+```
+
+Request:
+
+```json
+{
+  "query": "السكن الجامعي",
+  "top_k": 5
+}
+```
+
+Response:
+
+```json
+{
+  "query": "السكن الجامعي",
+  "results": [
+    {
+      "id": "taibah_student_housing_rules_ar-0001",
+      "document_title": "القواعد المنظمة للإسكان الطلابي بجامعة طيبة",
+      "section": "الباب الأول: التعريفات والأهداف",
+      "article": "",
+      "title": "الباب الأول: التعريفات والأهداف",
+      "score": 0.91,
+      "content": "...",
+      "content_preview": "..."
+    }
+  ]
+}
+```
+
+## Feedback API
+
+```bash
+POST /feedback
+```
+
+Request:
+
+```json
+{
+  "question": "هل يسمح بتصوير المحاضرات؟",
+  "answer": "لا، لا يسمح بتسجيل أو تصوير المحاضرات...",
+  "helpful": true,
+  "language": "ar",
+  "sources": []
+}
+```
+
+Response:
+
+```json
+{
+  "status": "ok"
+}
+```
+
 Response:
 
 ```json
@@ -113,8 +174,6 @@ Response:
   ]
 }
 ```
-
-`POST /ask` is kept as an alias for `POST /chat`.
 
 ## Flutter Integration
 

@@ -35,13 +35,13 @@ class AiApi {
             'Content-Type': 'application/json',
             'Accept': 'application/json',
           },
-          body: jsonEncode({'message': message, 'question': message}),
+          body: jsonEncode({'question': message}),
         )
         .timeout(const Duration(seconds: 25));
 
     final dynamic payload = response.body.isEmpty
         ? null
-        : jsonDecode(response.body);
+        : jsonDecode(utf8.decode(response.bodyBytes));
 
     if (response.statusCode != 200) {
       throw Exception(_extractErrorMessage(payload, response.statusCode));
@@ -73,7 +73,7 @@ class AiApi {
 
     final dynamic payload = response.body.isEmpty
         ? null
-        : jsonDecode(response.body);
+        : jsonDecode(utf8.decode(response.bodyBytes));
 
     if (response.statusCode != 200) {
       throw Exception(_extractErrorMessage(payload, response.statusCode));
@@ -117,7 +117,7 @@ class AiApi {
     if (response.statusCode != 200) {
       final dynamic payload = response.body.isEmpty
           ? null
-          : jsonDecode(response.body);
+          : jsonDecode(utf8.decode(response.bodyBytes));
       throw Exception(_extractErrorMessage(payload, response.statusCode));
     }
   }

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import 'ai_api.dart';
 import 'ai_chat_storage.dart';
+import 'ai_message_translation.dart';
 import 'regulation_search_page.dart';
 
 class AIChatPage extends StatefulWidget {
@@ -37,6 +38,9 @@ class _AIChatPageState extends State<AIChatPage> {
           'Is smoking allowed on campus?',
           'What are the housing conditions?',
         ];
+
+  static const String _arabicReferenceLabel = 'المرجع:';
+  static const String _englishReferenceLabel = 'Source:';
 
   @override
   void initState() {
@@ -89,6 +93,7 @@ class _AIChatPageState extends State<AIChatPage> {
     String text, {
     List<AiSourceReference> sources = const [],
     bool canFeedback = false,
+    bool canTranslate = false,
   }) {
     setState(() {
       _messages.add(
@@ -98,6 +103,7 @@ class _AIChatPageState extends State<AIChatPage> {
           timestamp: DateTime.now(),
           sources: sources,
           canFeedback: canFeedback,
+          canTranslate: canTranslate,
         ),
       );
     });
@@ -135,6 +141,7 @@ class _AIChatPageState extends State<AIChatPage> {
             : response.answer,
         sources: response.sources,
         canFeedback: response.sources.isNotEmpty,
+        canTranslate: true,
       );
     } catch (e) {
       if (!mounted) return;
@@ -199,6 +206,48 @@ class _AIChatPageState extends State<AIChatPage> {
     );
   }
 
+  String _messageBodyText(ChatMessage message) {
+    final text = message.text.trim();
+    final arabicIndex = text.indexOf(_arabicReferenceLabel);
+    final englishIndex = text.indexOf(_englishReferenceLabel);
+
+    int splitIndex = -1;
+    if (arabicIndex >= 0 && englishIndex >= 0) {
+      splitIndex = arabicIndex < englishIndex ? arabicIndex : englishIndex;
+    } else if (arabicIndex >= 0) {
+      splitIndex = arabicIndex;
+    } else if (englishIndex >= 0) {
+      splitIndex = englishIndex;
+    }
+
+    if (splitIndex < 0) {
+      return text;
+    }
+    return text.substring(0, splitIndex).trim();
+  }
+
+  String? _inlineReferenceText(ChatMessage message) {
+    final text = message.text.trim();
+    final arabicIndex = text.indexOf(_arabicReferenceLabel);
+    final englishIndex = text.indexOf(_englishReferenceLabel);
+
+    int splitIndex = -1;
+    if (arabicIndex >= 0 && englishIndex >= 0) {
+      splitIndex = arabicIndex < englishIndex ? arabicIndex : englishIndex;
+    } else if (arabicIndex >= 0) {
+      splitIndex = arabicIndex;
+    } else if (englishIndex >= 0) {
+      splitIndex = englishIndex;
+    }
+
+    if (splitIndex < 0) {
+      return null;
+    }
+
+    final referenceText = text.substring(splitIndex).trim();
+    return referenceText.isEmpty ? null : referenceText;
+  }
+
   String _questionForMessage(ChatMessage message) {
     final messageIndex = _messages.indexOf(message);
     if (messageIndex <= 0) {
@@ -241,6 +290,65 @@ class _AIChatPageState extends State<AIChatPage> {
             widget.isArabic
                 ? 'تعذر إرسال التقييم الآن.'
                 : 'Could not send feedback right now.',
+          ),
+        ),
+      );
+    }
+  }
+
+  String _translateButtonLabel(ChatMessage message) {
+    if (message.isTranslating) {
+      return widget.isArabic ? 'جاري الترجمة...' : 'Translating...';
+    }
+    if (message.translatedText != null && message.isShowingTranslation) {
+      return widget.isArabic ? 'إظهار الأصل' : 'Show original';
+    }
+    return widget.isArabic ? 'ترجمة' : 'Translate';
+  }
+
+  Future<void> _toggleMessageTranslation(ChatMessage message) async {
+    if (message.isUser) return;
+
+    final messageIndex = _messages.indexOf(message);
+    if (messageIndex < 0) return;
+
+    if (message.translatedText != null) {
+      setState(() {
+        _messages[messageIndex] = message.copyWith(
+          isShowingTranslation: !message.isShowingTranslation,
+        );
+      });
+      await _persistHistory();
+      return;
+    }
+
+    setState(() {
+      _messages[messageIndex] = message.copyWith(isTranslating: true);
+    });
+
+    try {
+      final result = await AiMessageTranslation.translate(_messageBodyText(message));
+      if (!mounted) return;
+
+      setState(() {
+        _messages[messageIndex] = message.copyWith(
+          translatedText: result.translatedText,
+          isShowingTranslation: true,
+          isTranslating: false,
+        );
+      });
+      await _persistHistory();
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _messages[messageIndex] = message.copyWith(isTranslating: false);
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            widget.isArabic
+                ? 'تعذر ترجمة هذه الرسالة الآن.'
+                : 'Could not translate this message right now.',
           ),
         ),
       );
@@ -494,6 +602,11 @@ class _AIChatPageState extends State<AIChatPage> {
   Widget _buildMessageBubble(ChatMessage message) {
     final isUser = message.isUser;
     final sourceText = _buildSourceText(message);
+    final inlineReferenceText = _inlineReferenceText(message);
+    final visibleText =
+        message.isShowingTranslation && message.translatedText != null
+        ? message.translatedText!
+        : _messageBodyText(message);
 
     return Align(
       alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
@@ -554,7 +667,7 @@ class _AIChatPageState extends State<AIChatPage> {
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     Text(
-                      message.text,
+                      visibleText,
                       style: TextStyle(
                         color: isUser ? Colors.white : Colors.black87,
                         fontSize: 15,
@@ -572,14 +685,33 @@ class _AIChatPageState extends State<AIChatPage> {
                         ),
                       ),
                     ],
+                    if (sourceText == null && inlineReferenceText != null) ...[
+                      const SizedBox(height: 8),
+                      Text(
+                        inlineReferenceText,
+                        style: TextStyle(
+                          color: isUser ? Colors.white70 : Colors.black54,
+                          fontSize: 12,
+                          height: 1.4,
+                        ),
+                      ),
+                    ],
                     if (!isUser &&
                         (message.sources.isNotEmpty ||
-                            message.canFeedback)) ...[
+                            message.canFeedback ||
+                            message.canTranslate)) ...[
                       const SizedBox(height: 8),
                       Wrap(
                         spacing: 4,
                         runSpacing: 4,
                         children: [
+                          if (message.canTranslate)
+                            TextButton(
+                              onPressed: message.isTranslating
+                                  ? null
+                                  : () => _toggleMessageTranslation(message),
+                              child: Text(_translateButtonLabel(message)),
+                            ),
                           if (message.sources.isNotEmpty)
                             TextButton(
                               onPressed: () => _showReferenceView(message),
@@ -639,10 +771,6 @@ class _AIChatPageState extends State<AIChatPage> {
       return null;
     }
 
-    if (message.text.contains('المرجع:') || message.text.contains('Source:')) {
-      return null;
-    }
-
     final label = widget.isArabic ? 'المرجع: ' : 'Source: ';
     return '$label${message.sources.map((source) => source.toDisplayString()).take(2).join('\n')}';
   }
@@ -673,22 +801,10 @@ class _AIChatPageState extends State<AIChatPage> {
             ),
             child: Row(
               mainAxisSize: MainAxisSize.min,
-              children: [_buildDot(), _buildDot(), _buildDot()],
+              children: [_AnimatedTypingDots(color: _primaryCyan)],
             ),
           ),
         ],
-      ),
-    );
-  }
-
-  Widget _buildDot() {
-    return Container(
-      margin: const EdgeInsets.symmetric(horizontal: 2),
-      width: 8,
-      height: 8,
-      decoration: BoxDecoration(
-        color: _primaryCyan,
-        borderRadius: BorderRadius.circular(4),
       ),
     );
   }
@@ -782,7 +898,11 @@ class ChatMessage {
   final DateTime timestamp;
   final List<AiSourceReference> sources;
   final bool canFeedback;
+  final bool canTranslate;
   final bool? helpful;
+  final String? translatedText;
+  final bool isShowingTranslation;
+  final bool isTranslating;
 
   ChatMessage({
     required this.text,
@@ -790,8 +910,14 @@ class ChatMessage {
     required this.timestamp,
     this.sources = const [],
     this.canFeedback = false,
+    this.canTranslate = false,
     this.helpful,
+    this.translatedText,
+    this.isShowingTranslation = false,
+    this.isTranslating = false,
   });
+
+  static const Object _unset = Object();
 
   ChatMessage copyWith({
     String? text,
@@ -799,7 +925,11 @@ class ChatMessage {
     DateTime? timestamp,
     List<AiSourceReference>? sources,
     bool? canFeedback,
-    bool? helpful,
+    bool? canTranslate,
+    Object? helpful = _unset,
+    Object? translatedText = _unset,
+    bool? isShowingTranslation,
+    bool? isTranslating,
   }) {
     return ChatMessage(
       text: text ?? this.text,
@@ -807,7 +937,13 @@ class ChatMessage {
       timestamp: timestamp ?? this.timestamp,
       sources: sources ?? this.sources,
       canFeedback: canFeedback ?? this.canFeedback,
-      helpful: helpful,
+      canTranslate: canTranslate ?? this.canTranslate,
+      helpful: identical(helpful, _unset) ? this.helpful : helpful as bool?,
+      translatedText: identical(translatedText, _unset)
+          ? this.translatedText
+          : translatedText as String?,
+      isShowingTranslation: isShowingTranslation ?? this.isShowingTranslation,
+      isTranslating: isTranslating ?? this.isTranslating,
     );
   }
 
@@ -820,7 +956,11 @@ class ChatMessage {
           .map((source) => source.toJson())
           .toList(growable: false),
       'canFeedback': canFeedback,
+      'canTranslate': canTranslate,
       'helpful': helpful,
+      'translatedText': translatedText,
+      'isShowingTranslation': isShowingTranslation,
+      'isTranslating': isTranslating,
     };
   }
 
@@ -843,7 +983,88 @@ class ChatMessage {
                 .toList(growable: false)
           : const [],
       canFeedback: map['canFeedback'] == true,
+      canTranslate: map['canTranslate'] == true,
       helpful: map['helpful'] is bool ? map['helpful'] as bool : null,
+      translatedText: (map['translatedText'] ?? '').toString().trim().isEmpty
+          ? null
+          : (map['translatedText'] ?? '').toString(),
+      isShowingTranslation: map['isShowingTranslation'] == true,
+      isTranslating: false,
     );
+  }
+}
+
+class _AnimatedTypingDots extends StatefulWidget {
+  final Color color;
+
+  const _AnimatedTypingDots({required this.color});
+
+  @override
+  State<_AnimatedTypingDots> createState() => _AnimatedTypingDotsState();
+}
+
+class _AnimatedTypingDotsState extends State<_AnimatedTypingDots>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1200),
+    )..repeat();
+  }
+
+  double _waveValue(int index) {
+    var progress = _controller.value - (index * 0.18);
+    while (progress < 0) {
+      progress += 1;
+    }
+    progress = progress % 1;
+
+    if (progress <= 0.5) {
+      return Curves.easeOut.transform(progress / 0.5);
+    }
+    return Curves.easeIn.transform((1 - progress) / 0.5);
+  }
+
+  Widget _buildDot(int index) {
+    final wave = _waveValue(index);
+    return Transform.translate(
+      offset: Offset(0, -4 * wave),
+      child: Opacity(
+        opacity: 0.4 + (wave * 0.6),
+        child: Transform.scale(
+          scale: 0.8 + (wave * 0.35),
+          child: Container(
+            margin: const EdgeInsets.symmetric(horizontal: 2),
+            width: 8,
+            height: 8,
+            decoration: BoxDecoration(
+              color: widget.color,
+              borderRadius: BorderRadius.circular(4),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _controller,
+      builder: (context, _) => Row(
+        mainAxisSize: MainAxisSize.min,
+        children: List.generate(3, _buildDot),
+      ),
+    );
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
   }
 }
