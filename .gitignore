@@ -43,3 +43,22 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+# Python
+venv/
+__pycache__/
+*.py[cod]
+
+# Environment variables
+.env
+
+# Databases
+*.sqlite3
+
+# Vector database / embeddings
+chroma/
+chromadb/
+data/
+
+# Binary tools
+*.exe
+*.bin

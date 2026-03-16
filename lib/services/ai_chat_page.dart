@@ -32,10 +32,15 @@ class _AIChatPageState extends State<AIChatPage> {
     );
   }
 
-  void _addBotMessage(String text) {
+  void _addBotMessage(String text, {List<String> sources = const []}) {
     setState(() {
       _messages.add(
-        ChatMessage(text: text, isUser: false, timestamp: DateTime.now()),
+        ChatMessage(
+          text: text,
+          isUser: false,
+          timestamp: DateTime.now(),
+          sources: sources,
+        ),
       );
     });
     _scrollToBottom();
@@ -58,17 +63,21 @@ class _AIChatPageState extends State<AIChatPage> {
     _scrollToBottom();
 
     try {
-      // نرسل السؤال كما هو للسيرفر (هو اللي يعتمد على KB + Gemini)
-      final answer = await AiApi.ask(text);
+      final response = await AiApi.ask(text);
       if (!mounted) return;
 
       setState(() => _isTyping = false);
       _addBotMessage(
-        answer.isEmpty
+        response.answer.isEmpty
             ? (widget.isArabic
                   ? "ما قدرت أطلع جواب."
                   : "I couldn't generate an answer.")
-            : answer,
+            : response.answer,
+        sources: response.sources
+            .map((source) => source.toDisplayString())
+            .where((source) => source.isNotEmpty)
+            .take(2)
+            .toList(growable: false),
       );
     } catch (e) {
       if (!mounted) return;
@@ -222,6 +231,7 @@ class _AIChatPageState extends State<AIChatPage> {
 
   Widget _buildMessageBubble(ChatMessage message) {
     final isUser = message.isUser;
+    final sourceText = _buildSourceText(message);
 
     return Align(
       alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
@@ -277,13 +287,30 @@ class _AIChatPageState extends State<AIChatPage> {
                     ),
                   ],
                 ),
-                child: Text(
-                  message.text,
-                  style: TextStyle(
-                    color: isUser ? Colors.white : Colors.black87,
-                    fontSize: 15,
-                    height: 1.4,
-                  ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      message.text,
+                      style: TextStyle(
+                        color: isUser ? Colors.white : Colors.black87,
+                        fontSize: 15,
+                        height: 1.4,
+                      ),
+                    ),
+                    if (sourceText != null) ...[
+                      const SizedBox(height: 8),
+                      Text(
+                        sourceText,
+                        style: TextStyle(
+                          color: isUser ? Colors.white70 : Colors.black54,
+                          fontSize: 12,
+                          height: 1.4,
+                        ),
+                      ),
+                    ],
+                  ],
                 ),
               ),
             ),
@@ -299,6 +326,19 @@ class _AIChatPageState extends State<AIChatPage> {
         ),
       ),
     );
+  }
+
+  String? _buildSourceText(ChatMessage message) {
+    if (message.isUser || message.sources.isEmpty) {
+      return null;
+    }
+
+    if (message.text.contains('المرجع:') || message.text.contains('Source:')) {
+      return null;
+    }
+
+    final label = widget.isArabic ? 'المرجع: ' : 'Source: ';
+    return '$label${message.sources.join('\n')}';
   }
 
   Widget _buildTypingIndicator() {
@@ -434,10 +474,12 @@ class ChatMessage {
   final String text;
   final bool isUser;
   final DateTime timestamp;
+  final List<String> sources;
 
   ChatMessage({
     required this.text,
     required this.isUser,
     required this.timestamp,
+    this.sources = const [],
   });
 }

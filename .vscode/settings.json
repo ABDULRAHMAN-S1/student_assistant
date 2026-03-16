@@ -35,5 +35,6 @@
   "terminal.integrated.defaultProfile.windows": "Command Prompt",
   // ===== UI Cleanliness =====
   "workbench.iconTheme": "material-icon-theme",
-  "editor.minimap.enabled": false
+  "editor.minimap.enabled": false,
+  "python-envs.defaultEnvManager": "ms-python.python:system"
 }
