@@ -1,43 +1,22 @@
-import 'package:hive/hive.dart';
+import '../features/ai_assistant/data/local/chat_history_store.dart';
 
 class AiChatStorage {
-  static const String _boxName = 'ai_chat_history';
-
-  static Future<Box> _openBox() async {
-    if (Hive.isBoxOpen(_boxName)) {
-      return Hive.box(_boxName);
-    }
-    return Hive.openBox(_boxName);
-  }
-
-  static String _historyKey(bool isArabic) =>
-      isArabic ? 'arabic_history' : 'english_history';
+  static const ChatHistoryStore _store = ChatHistoryStore();
 
   static Future<List<Map<String, dynamic>>> loadHistory({
     required bool isArabic,
-  }) async {
-    final box = await _openBox();
-    final raw = box.get(_historyKey(isArabic), defaultValue: const []);
-    if (raw is! List) {
-      return const [];
-    }
-
-    return raw
-        .whereType<Map>()
-        .map((item) => Map<String, dynamic>.from(item))
-        .toList(growable: false);
+  }) {
+    return _store.loadHistory(isArabic: isArabic);
   }
 
   static Future<void> saveHistory({
     required bool isArabic,
     required List<Map<String, dynamic>> messages,
-  }) async {
-    final box = await _openBox();
-    await box.put(_historyKey(isArabic), messages);
+  }) {
+    return _store.saveHistory(isArabic: isArabic, messages: messages);
   }
 
-  static Future<void> clearHistory({required bool isArabic}) async {
-    final box = await _openBox();
-    await box.delete(_historyKey(isArabic));
+  static Future<void> clearHistory({required bool isArabic}) {
+    return _store.clearHistory(isArabic: isArabic);
   }
 }

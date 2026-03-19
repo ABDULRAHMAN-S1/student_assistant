@@ -84,6 +84,7 @@ def regulation_search(request: SearchRequest) -> dict[str, object]:
     results = [
         {
             "id": item["id"],
+            "doc_type": item["metadata"].get("doc_type"),
             "document_title": item["metadata"].get("document_title"),
             "section": item["metadata"].get("section"),
             "article": item["metadata"].get("article"),

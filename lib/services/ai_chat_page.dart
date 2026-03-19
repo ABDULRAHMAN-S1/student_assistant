@@ -1,14 +1,29 @@
 import 'package:flutter/material.dart';
 
-import 'ai_api.dart';
-import 'ai_chat_storage.dart';
-import 'ai_message_translation.dart';
+import '../features/ai_assistant/data/local/chat_history_store.dart';
+import '../features/ai_assistant/data/repositories/assistant_repository.dart';
+import '../features/ai_assistant/data/services/message_translation_service.dart';
+import '../features/ai_assistant/domain/models/chat_message.dart';
+import '../features/ai_assistant/domain/models/regulation_source.dart';
+import '../features/courses/data/demo/demo_course_repository.dart';
+import '../features/events/data/demo/demo_event_repository.dart';
+import '../features/profile/data/demo/demo_profile_repository.dart';
+import '../features/profile/data/local/profile_store.dart';
+import '../features/profile/domain/models/academic_context.dart';
+import '../features/profile/domain/models/student_profile.dart';
+import '../features/recommendations/data/services/recommendation_engine.dart';
+import '../features/recommendations/domain/models/recommendation_item.dart';
 import 'regulation_search_page.dart';
 
 class AIChatPage extends StatefulWidget {
   final bool isArabic;
+  final int profileRefreshToken;
 
-  const AIChatPage({super.key, required this.isArabic});
+  const AIChatPage({
+    super.key,
+    required this.isArabic,
+    this.profileRefreshToken = 0,
+  });
 
   @override
   State<AIChatPage> createState() => _AIChatPageState();
@@ -18,8 +33,18 @@ class _AIChatPageState extends State<AIChatPage> {
   final TextEditingController _messageController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
   final List<ChatMessage> _messages = [];
+  final AssistantRepository _assistantRepository = const AssistantRepository();
+  final ChatHistoryStore _chatHistoryStore = const ChatHistoryStore();
+  final MessageTranslationService _messageTranslationService =
+      const MessageTranslationService();
+  final DemoCourseRepository _courseRepository = DemoCourseRepository();
+  final DemoEventRepository _eventRepository = DemoEventRepository();
+  final RecommendationEngine _recommendationEngine =
+      const RecommendationEngine();
   bool _isTyping = false;
   bool _isLoadingHistory = true;
+  late bool _activeHistoryIsArabic;
+  List<String> _personalizedSuggestedQuestions = const [];
 
   final Color _primaryCyan = const Color(0xFF5421D9);
   final Color _secondaryBlue = const Color(0xFF6D0FE0);
@@ -39,18 +64,55 @@ class _AIChatPageState extends State<AIChatPage> {
           'What are the housing conditions?',
         ];
 
-  static const String _arabicReferenceLabel = 'المرجع:';
-  static const String _englishReferenceLabel = 'Source:';
+  static const List<String> _arabicReferenceLabels = [
+    'المصدر المعتمد:',
+    'المرجع:',
+  ];
+  static const List<String> _englishReferenceLabels = [
+    'Official source:',
+    'Source:',
+  ];
 
   @override
   void initState() {
     super.initState();
+    _activeHistoryIsArabic = widget.isArabic;
     _initializeChat();
+    _loadStudentAwareSuggestions();
+  }
+
+  @override
+  void didUpdateWidget(covariant AIChatPage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.isArabic != widget.isArabic) {
+      _syncActiveHistoryBucket();
+    }
+    if (oldWidget.isArabic != widget.isArabic ||
+        oldWidget.profileRefreshToken != widget.profileRefreshToken) {
+      _loadStudentAwareSuggestions();
+    }
+  }
+
+  Future<void> _syncActiveHistoryBucket() async {
+    final nextHistoryIsArabic = widget.isArabic;
+    if (_activeHistoryIsArabic == nextHistoryIsArabic) {
+      return;
+    }
+
+    setState(() {
+      _activeHistoryIsArabic = nextHistoryIsArabic;
+    });
+
+    if (_isLoadingHistory) {
+      return;
+    }
+
+    await _persistHistory();
   }
 
   Future<void> _initializeChat() async {
-    final storedHistory = await AiChatStorage.loadHistory(
-      isArabic: widget.isArabic,
+    final storedHistory = await _chatHistoryStore.loadHistory(
+      isArabic: _activeHistoryIsArabic,
     );
     if (!mounted) return;
 
@@ -77,10 +139,383 @@ class _AIChatPageState extends State<AIChatPage> {
     _scrollToBottom();
   }
 
-  Future<void> _persistHistory() async {
-    await AiChatStorage.saveHistory(
+  Future<void> _loadStudentAwareSuggestions() async {
+    final profileStore = await ProfileStore.open();
+    final profileRepository = DemoProfileRepository(profileStore: profileStore);
+    final profile = await profileRepository.loadProfile();
+
+    if (!mounted) return;
+
+    if (profile == null) {
+      setState(() {
+        _personalizedSuggestedQuestions = const [];
+      });
+      return;
+    }
+
+    final recommendations = _recommendationEngine.generate(
+      profile: profile,
+      courses: _courseRepository.getCourses(),
+      events: _eventRepository.getEvents(),
+      maxResults: 4,
       isArabic: widget.isArabic,
+    );
+    final prompts = _buildStudentAwarePrompts(profile, recommendations);
+
+    if (!mounted) return;
+    setState(() {
+      _personalizedSuggestedQuestions = prompts;
+    });
+  }
+
+  List<String> _buildStudentAwarePrompts(
+    StudentProfile profile,
+    List<RecommendationItem> recommendations,
+  ) {
+    final prompts = <String>[];
+    final seen = <String>{};
+
+    void addPrompt(String value) {
+      if (value.trim().isEmpty) return;
+      if (seen.add(value)) {
+        prompts.add(value);
+      }
+    }
+
+    final academicContext = profile.academicContext;
+    final profileSignals = _buildProfileSignalsText(profile, recommendations);
+    final hasAcademicLoadContext =
+        academicContext.specialization.trim().isNotEmpty ||
+        (academicContext.academicLevel?.trim().isNotEmpty ?? false) ||
+        (academicContext.currentSemester?.trim().isNotEmpty ?? false) ||
+        academicContext.interests.isNotEmpty ||
+        academicContext.enrolledCourseIds.isNotEmpty;
+
+    final hasCourseRecommendation = recommendations.any(
+      (item) => item.type == RecommendationItem.courseType,
+    );
+    final hasExamRecommendation = recommendations.any(_isExamRecommendation);
+    final hasWorkshopRecommendation = recommendations.any(
+      _isWorkshopRecommendation,
+    );
+    final isTechnicalProfile = _matchesAny(profileSignals, const [
+      'computer',
+      'computing',
+      'software',
+      'programming',
+      'artificial intelligence',
+      'information systems',
+      'cyber',
+      'data',
+      'علوم الحاسب',
+      'حاسب',
+      'حاسوب',
+      'برمجة',
+      'الذكاء الاصطناعي',
+      'تقنية',
+      'نظم المعلومات',
+      'أمن سيبراني',
+      'software engineering',
+      'programming workshop',
+    ]);
+    final isHealthProfile = _matchesAny(profileSignals, const [
+      'medicine',
+      'medical',
+      'health',
+      'pharmacy',
+      'pharmd',
+      'nursing',
+      'clinical',
+      'lab',
+      'طب',
+      'صيدلة',
+      'تمريض',
+      'صحي',
+      'سريري',
+      'إكلينيكي',
+      'مختبر',
+      'تدريب ميداني',
+      'practical training',
+    ]);
+    final hasTrainingContext = _matchesAny(profileSignals, const [
+      'training',
+      'internship',
+      'clinical',
+      'practical',
+      'lab',
+      'امتياز',
+      'تدريب',
+      'إكلينيكي',
+      'عملي',
+      'ميداني',
+      'مختبر',
+    ]);
+    final hasGeneralEducationContext = _matchesAny(profileSignals, const [
+      'general education',
+      'elective',
+      'general course',
+      'المقررات العامة',
+      'المقررات الاختيارية',
+      'اختياري',
+      'اختيارية',
+      'عام',
+    ]);
+    final hasGradingContext = _matchesAny(profileSignals, const [
+      'gpa',
+      'grade',
+      'grading',
+      'dn',
+      'ic',
+      'wp',
+      'wf',
+      'np',
+      'المعدل',
+      'التقديرات',
+      'التقدير',
+      'dn',
+      'ic',
+    ]);
+    final isSeniorProfile = _isSeniorProfile(academicContext, profileSignals);
+    final isJuniorProfile = _isJuniorProfile(academicContext, profileSignals);
+
+    if (widget.isArabic) {
+      if (isTechnicalProfile) {
+        addPrompt('هل يسمح بتصوير المحاضرات أو المواد التعليمية بدون إذن؟');
+        addPrompt('ما عقوبة الغش أو الاعتداء على الحقوق الفكرية؟');
+      }
+      if (isHealthProfile || hasTrainingContext) {
+        addPrompt('ما الحد الأدنى للحضور في الدروس العملية أو التدريب؟');
+        addPrompt('ماذا يحدث إذا غاب الطالب عن الاختبار النهائي بعذر؟');
+      }
+      if (isSeniorProfile) {
+        addPrompt('ما متطلبات التخرج في البرنامج؟');
+        addPrompt('ما شروط الحصول على مرتبة الشرف؟');
+      }
+      if (isJuniorProfile) {
+        addPrompt('متى يطبق الإنذار الأكاديمي؟');
+        addPrompt('كيف يحسب المعدل الفصلي والتراكمي؟');
+      }
+      if (hasGeneralEducationContext) {
+        addPrompt('ما سياسة المقررات العامة والاختيارية؟');
+      }
+      if (hasGradingContext || isHealthProfile || isJuniorProfile) {
+        addPrompt('ما معنى DN وبقية رموز التقديرات؟');
+      }
+      if (hasAcademicLoadContext || hasCourseRecommendation) {
+        addPrompt('ما الحد الأعلى والحد الأدنى للعبء الدراسي؟');
+        addPrompt('هل أستطيع الانسحاب من مقرر؟');
+      }
+      if (hasExamRecommendation) {
+        addPrompt('ماذا يحدث إذا غاب الطالب عن الاختبار النهائي؟');
+        addPrompt('ما عقوبة الغش في الاختبار؟');
+      }
+      if (hasWorkshopRecommendation || hasCourseRecommendation) {
+        addPrompt('هل يسمح بتسجيل أو تصوير المحاضرات بدون إذن؟');
+      }
+      if (prompts.isEmpty) {
+        addPrompt('هل أستطيع الانسحاب من مقرر؟');
+        addPrompt('ماذا يحدث إذا غاب الطالب عن الاختبار النهائي؟');
+        addPrompt('ما نظام التقديرات؟');
+        addPrompt('هل يسمح بتصوير المحاضرات بدون إذن؟');
+      }
+    } else {
+      if (isTechnicalProfile) {
+        addPrompt(
+          'Is recording lectures or course materials allowed without permission?',
+        );
+        addPrompt(
+          'What is the penalty for cheating or violating intellectual property?',
+        );
+      }
+      if (isHealthProfile || hasTrainingContext) {
+        addPrompt(
+          'What is the minimum attendance required for practical training?',
+        );
+        addPrompt(
+          'What happens if a student misses a final exam with an excuse?',
+        );
+      }
+      if (isSeniorProfile) {
+        addPrompt('What are the graduation requirements for the program?');
+        addPrompt('What are the requirements for graduating with honors?');
+      }
+      if (isJuniorProfile) {
+        addPrompt('When is an academic warning applied?');
+        addPrompt('How are the semester and cumulative GPA calculated?');
+      }
+      if (hasGeneralEducationContext) {
+        addPrompt('What is the General Education and Elective Courses Policy?');
+      }
+      if (hasGradingContext || isHealthProfile || isJuniorProfile) {
+        addPrompt('What do DN and other grading codes mean?');
+      }
+      if (hasAcademicLoadContext || hasCourseRecommendation) {
+        addPrompt('What are the minimum and maximum academic load limits?');
+        addPrompt('Can I withdraw from a course?');
+      }
+      if (hasExamRecommendation) {
+        addPrompt('What happens if a student misses a final exam?');
+        addPrompt('What is the penalty for cheating in an exam?');
+      }
+      if (hasWorkshopRecommendation || hasCourseRecommendation) {
+        addPrompt('Is recording lectures allowed without permission?');
+      }
+      if (prompts.isEmpty) {
+        addPrompt('Can I withdraw from a course?');
+        addPrompt('What happens if a student misses a final exam?');
+        addPrompt('What is the grading system?');
+        addPrompt('Is recording lectures allowed without permission?');
+      }
+    }
+
+    return prompts.take(4).toList(growable: false);
+  }
+
+  String _buildProfileSignalsText(
+    StudentProfile profile,
+    List<RecommendationItem> recommendations,
+  ) {
+    final academicContext = profile.academicContext;
+    final parts = <String>[
+      profile.fullName,
+      academicContext.specialization,
+      academicContext.academicLevel ?? '',
+      academicContext.currentSemester ?? '',
+      ...academicContext.interests,
+      ...academicContext.enrolledCourseIds,
+      ...recommendations.map(
+        (item) => '${item.title} ${item.description} ${item.reason}',
+      ),
+    ];
+    return parts.join(' ').toLowerCase();
+  }
+
+  bool _matchesAny(String text, List<String> keywords) {
+    return keywords.any((keyword) => text.contains(keyword.toLowerCase()));
+  }
+
+  int? _parseSemesterNumber(String? rawValue) {
+    if (rawValue == null || rawValue.trim().isEmpty) {
+      return null;
+    }
+
+    const arabicDigits = {
+      '٠': '0',
+      '١': '1',
+      '٢': '2',
+      '٣': '3',
+      '٤': '4',
+      '٥': '5',
+      '٦': '6',
+      '٧': '7',
+      '٨': '8',
+      '٩': '9',
+    };
+
+    final normalizedDigits = rawValue
+        .split('')
+        .map((char) => arabicDigits[char] ?? char)
+        .join();
+    final match = RegExp(r'\d+').firstMatch(normalizedDigits);
+    if (match == null) {
+      return null;
+    }
+
+    return int.tryParse(match.group(0)!);
+  }
+
+  bool _isSeniorProfile(AcademicContext context, String signals) {
+    final semester = _parseSemesterNumber(context.currentSemester);
+    if (semester != null && semester >= 7) {
+      return true;
+    }
+
+    return _matchesAny(signals, const [
+      'senior',
+      'final year',
+      'graduation',
+      'graduate',
+      'الخريج',
+      'التخرج',
+      'سنة التخرج',
+      'المستوى الثامن',
+      'المستوى السابع',
+    ]);
+  }
+
+  bool _isJuniorProfile(AcademicContext context, String signals) {
+    final semester = _parseSemesterNumber(context.currentSemester);
+    if (semester != null && semester > 0 && semester <= 4) {
+      return true;
+    }
+
+    return _matchesAny(signals, const [
+      'freshman',
+      'sophomore',
+      'first year',
+      'second year',
+      'المستوى الأول',
+      'المستوى الثاني',
+      'المستوى الثالث',
+      'المستوى الرابع',
+      'مستجد',
+    ]);
+  }
+
+  bool _isExamRecommendation(RecommendationItem item) {
+    final haystack = '${item.title} ${item.description} ${item.reason}'
+        .toLowerCase();
+    return haystack.contains('exam') ||
+        haystack.contains('midterm') ||
+        haystack.contains('final') ||
+        haystack.contains('deadline') ||
+        haystack.contains('اختبار') ||
+        haystack.contains('امتحان') ||
+        haystack.contains('نهائي');
+  }
+
+  bool _isWorkshopRecommendation(RecommendationItem item) {
+    final haystack = '${item.title} ${item.description} ${item.reason}'
+        .toLowerCase();
+    return haystack.contains('workshop') ||
+        haystack.contains('lecture') ||
+        haystack.contains('course') ||
+        haystack.contains('programming') ||
+        haystack.contains('ورشة') ||
+        haystack.contains('محاضرة') ||
+        haystack.contains('مقرر') ||
+        haystack.contains('برمجة');
+  }
+
+  String _studentAwareHintText() {
+    return widget.isArabic
+        ? 'أسئلة مبنية على ملفك الأكاديمي وتوصياتك الحالية.'
+        : 'Questions based on your academic context and current recommendations.';
+  }
+
+  Future<void> _persistHistory() async {
+    await _chatHistoryStore.saveHistory(
+      isArabic: _activeHistoryIsArabic,
       messages: _messages.map((message) => message.toMap()).toList(),
+    );
+  }
+
+  bool _isSameLogicalMessage(ChatMessage left, ChatMessage right) {
+    return left.timestamp == right.timestamp &&
+        left.isUser == right.isUser &&
+        left.text == right.text;
+  }
+
+  int _resolveMessageIndex(ChatMessage message, {int? preferredIndex}) {
+    if (preferredIndex != null &&
+        preferredIndex >= 0 &&
+        preferredIndex < _messages.length &&
+        _isSameLogicalMessage(_messages[preferredIndex], message)) {
+      return preferredIndex;
+    }
+
+    return _messages.indexWhere(
+      (candidate) => _isSameLogicalMessage(candidate, message),
     );
   }
 
@@ -91,7 +526,7 @@ class _AIChatPageState extends State<AIChatPage> {
 
   void _addBotMessage(
     String text, {
-    List<AiSourceReference> sources = const [],
+    List<RegulationSource> sources = const [],
     bool canFeedback = false,
     bool canTranslate = false,
   }) {
@@ -129,7 +564,7 @@ class _AIChatPageState extends State<AIChatPage> {
     _scrollToBottom();
 
     try {
-      final response = await AiApi.ask(text);
+      final response = await _assistantRepository.ask(text);
       if (!mounted) return;
 
       setState(() => _isTyping = false);
@@ -143,14 +578,14 @@ class _AIChatPageState extends State<AIChatPage> {
         canFeedback: response.sources.isNotEmpty,
         canTranslate: true,
       );
-    } catch (e) {
+    } catch (_) {
       if (!mounted) return;
 
       setState(() => _isTyping = false);
       _addBotMessage(
         widget.isArabic
-            ? "صار خطأ في الاتصال: ${e.toString()}"
-            : "Connection error: ${e.toString()}",
+            ? 'تعذر الاتصال بالمساعد الآن. حاول مرة أخرى.'
+            : 'Could not reach the assistant right now. Please try again.',
       );
     }
   }
@@ -180,8 +615,10 @@ class _AIChatPageState extends State<AIChatPage> {
 
     if (shouldClear != true || !mounted) return;
 
-    await AiChatStorage.clearHistory(isArabic: widget.isArabic);
+    final historyBucketToClear = _activeHistoryIsArabic;
+    await _chatHistoryStore.clearHistory(isArabic: historyBucketToClear);
     setState(() {
+      _activeHistoryIsArabic = widget.isArabic;
       _messages
         ..clear()
         ..add(
@@ -206,19 +643,22 @@ class _AIChatPageState extends State<AIChatPage> {
     );
   }
 
+  int _referenceSplitIndex(String text) {
+    final indices = <int>[
+      ..._arabicReferenceLabels.map(text.indexOf).where((index) => index >= 0),
+      ..._englishReferenceLabels.map(text.indexOf).where((index) => index >= 0),
+    ];
+
+    if (indices.isEmpty) {
+      return -1;
+    }
+    indices.sort();
+    return indices.first;
+  }
+
   String _messageBodyText(ChatMessage message) {
     final text = message.text.trim();
-    final arabicIndex = text.indexOf(_arabicReferenceLabel);
-    final englishIndex = text.indexOf(_englishReferenceLabel);
-
-    int splitIndex = -1;
-    if (arabicIndex >= 0 && englishIndex >= 0) {
-      splitIndex = arabicIndex < englishIndex ? arabicIndex : englishIndex;
-    } else if (arabicIndex >= 0) {
-      splitIndex = arabicIndex;
-    } else if (englishIndex >= 0) {
-      splitIndex = englishIndex;
-    }
+    final splitIndex = _referenceSplitIndex(text);
 
     if (splitIndex < 0) {
       return text;
@@ -228,17 +668,7 @@ class _AIChatPageState extends State<AIChatPage> {
 
   String? _inlineReferenceText(ChatMessage message) {
     final text = message.text.trim();
-    final arabicIndex = text.indexOf(_arabicReferenceLabel);
-    final englishIndex = text.indexOf(_englishReferenceLabel);
-
-    int splitIndex = -1;
-    if (arabicIndex >= 0 && englishIndex >= 0) {
-      splitIndex = arabicIndex < englishIndex ? arabicIndex : englishIndex;
-    } else if (arabicIndex >= 0) {
-      splitIndex = arabicIndex;
-    } else if (englishIndex >= 0) {
-      splitIndex = englishIndex;
-    }
+    final splitIndex = _referenceSplitIndex(text);
 
     if (splitIndex < 0) {
       return null;
@@ -246,6 +676,185 @@ class _AIChatPageState extends State<AIChatPage> {
 
     final referenceText = text.substring(splitIndex).trim();
     return referenceText.isEmpty ? null : referenceText;
+  }
+
+  String _referenceHeading(RegulationSource source) {
+    if (source.primaryDisplayTitle.isNotEmpty) {
+      return source.primaryDisplayTitle;
+    }
+    return source.sourceTypeLabel(isArabic: widget.isArabic);
+  }
+
+  String _compactReferenceLine(RegulationSource source) {
+    final heading = _referenceHeading(source);
+    final parts = <String>[
+      source.sourceTypeTag(isArabic: widget.isArabic),
+      heading,
+      if (source.secondaryDisplayArticle.isNotEmpty)
+        '• ${source.secondaryDisplayArticle}',
+      if (source.secondaryDisplaySection.isNotEmpty)
+        '• ${source.secondaryDisplaySection}',
+    ];
+    return parts.join(' ');
+  }
+
+  String _referenceFieldLabel(String arabic, String english) {
+    return widget.isArabic ? arabic : english;
+  }
+
+  Widget _buildReferenceField({
+    required String label,
+    required String value,
+    Color? valueColor,
+    FontWeight valueWeight = FontWeight.w600,
+  }) {
+    if (value.trim().isEmpty) {
+      return const SizedBox.shrink();
+    }
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            label,
+            style: TextStyle(
+              color: Colors.grey[600],
+              fontSize: 12.5,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            value,
+            style: TextStyle(
+              color: valueColor ?? Colors.black87,
+              fontSize: 14,
+              fontWeight: valueWeight,
+              height: 1.4,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  TextStyle _messageBodyStyle(bool isUser) {
+    return TextStyle(
+      color: isUser ? Colors.white : Colors.black87,
+      fontSize: 15.2,
+      fontWeight: FontWeight.w500,
+      height: widget.isArabic ? 1.62 : 1.48,
+    );
+  }
+
+  Widget? _buildReferenceSummaryBlock(
+    ChatMessage message,
+    String? inlineReferenceText,
+  ) {
+    if (message.isUser) {
+      return null;
+    }
+
+    final label = widget.isArabic ? 'المصدر المعتمد' : 'Official source';
+    final inlineLines = inlineReferenceText == null
+        ? const <String>[]
+        : inlineReferenceText
+              .split('\n')
+              .map((line) => line.trim())
+              .where((line) => line.isNotEmpty)
+              .toList(growable: true);
+    if (inlineLines.isNotEmpty &&
+        (_arabicReferenceLabels.contains(inlineLines.first) ||
+            _englishReferenceLabels.contains(inlineLines.first))) {
+      inlineLines.removeAt(0);
+    }
+
+    final lines = message.sources.isNotEmpty
+        ? message.sources
+              .map(_compactReferenceLine)
+              .take(3)
+              .toList(growable: false)
+        : inlineLines;
+
+    if (lines.isEmpty) {
+      return null;
+    }
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF7F8FC),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: Colors.grey.shade300),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              Icon(
+                Icons.description_outlined,
+                size: 15,
+                color: Colors.grey.shade700,
+              ),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text(
+                  label,
+                  style: TextStyle(
+                    color: Colors.grey.shade800,
+                    fontSize: 12.4,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          ...lines.map(
+            (line) => Padding(
+              padding: const EdgeInsets.only(bottom: 6),
+              child: Text(
+                line,
+                style: TextStyle(
+                  color: Colors.black87,
+                  fontSize: 12.6,
+                  height: widget.isArabic ? 1.5 : 1.4,
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildMessageActionButton({
+    required String label,
+    required IconData icon,
+    required VoidCallback? onPressed,
+    Color? foregroundColor,
+  }) {
+    final resolvedColor = foregroundColor ?? Colors.grey.shade700;
+    return TextButton.icon(
+      onPressed: onPressed,
+      icon: Icon(icon, size: 16, color: resolvedColor),
+      label: Text(label),
+      style: TextButton.styleFrom(
+        foregroundColor: resolvedColor,
+        backgroundColor: resolvedColor.withValues(alpha: 0.08),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        minimumSize: Size.zero,
+        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        visualDensity: const VisualDensity(horizontal: -2, vertical: -2),
+        textStyle: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      ),
+    );
   }
 
   String _questionForMessage(ChatMessage message) {
@@ -266,8 +875,9 @@ class _AIChatPageState extends State<AIChatPage> {
   Future<void> _submitFeedback(ChatMessage message, bool helpful) async {
     if (!message.canFeedback) return;
 
-    final messageIndex = _messages.indexOf(message);
+    final messageIndex = _resolveMessageIndex(message);
     if (messageIndex < 0) return;
+    final previousHelpful = message.helpful;
 
     setState(() {
       _messages[messageIndex] = message.copyWith(helpful: helpful);
@@ -275,7 +885,7 @@ class _AIChatPageState extends State<AIChatPage> {
     await _persistHistory();
 
     try {
-      await AiApi.sendFeedback(
+      await _assistantRepository.sendFeedback(
         question: _questionForMessage(message),
         answer: message.text,
         helpful: helpful,
@@ -283,6 +893,20 @@ class _AIChatPageState extends State<AIChatPage> {
         sources: message.sources,
       );
     } catch (_) {
+      if (!mounted) return;
+
+      final currentMessageIndex = _resolveMessageIndex(
+        message,
+        preferredIndex: messageIndex,
+      );
+      if (currentMessageIndex < 0) return;
+
+      setState(() {
+        _messages[currentMessageIndex] = message.copyWith(
+          helpful: previousHelpful,
+        );
+      });
+      await _persistHistory();
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -309,7 +933,7 @@ class _AIChatPageState extends State<AIChatPage> {
   Future<void> _toggleMessageTranslation(ChatMessage message) async {
     if (message.isUser) return;
 
-    final messageIndex = _messages.indexOf(message);
+    final messageIndex = _resolveMessageIndex(message);
     if (messageIndex < 0) return;
 
     if (message.translatedText != null) {
@@ -327,11 +951,19 @@ class _AIChatPageState extends State<AIChatPage> {
     });
 
     try {
-      final result = await AiMessageTranslation.translate(_messageBodyText(message));
+      final result = await _messageTranslationService.translate(
+        _messageBodyText(message),
+      );
       if (!mounted) return;
 
+      final currentMessageIndex = _resolveMessageIndex(
+        message,
+        preferredIndex: messageIndex,
+      );
+      if (currentMessageIndex < 0) return;
+
       setState(() {
-        _messages[messageIndex] = message.copyWith(
+        _messages[currentMessageIndex] = message.copyWith(
           translatedText: result.translatedText,
           isShowingTranslation: true,
           isTranslating: false,
@@ -340,8 +972,15 @@ class _AIChatPageState extends State<AIChatPage> {
       await _persistHistory();
     } catch (_) {
       if (!mounted) return;
+
+      final currentMessageIndex = _resolveMessageIndex(
+        message,
+        preferredIndex: messageIndex,
+      );
+      if (currentMessageIndex < 0) return;
+
       setState(() {
-        _messages[messageIndex] = message.copyWith(isTranslating: false);
+        _messages[currentMessageIndex] = message.copyWith(isTranslating: false);
       });
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -361,58 +1000,161 @@ class _AIChatPageState extends State<AIChatPage> {
     showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
+      backgroundColor: Colors.transparent,
       builder: (context) => SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: ListView.separated(
-            shrinkWrap: true,
-            itemCount: message.sources.length,
-            separatorBuilder: (_, _) => const SizedBox(height: 12),
-            itemBuilder: (context, index) {
-              final source = message.sources[index];
-              return Container(
-                padding: const EdgeInsets.all(14),
-                decoration: BoxDecoration(
-                  color: Colors.grey[50],
-                  borderRadius: BorderRadius.circular(16),
-                  border: Border.all(color: Colors.grey[300]!),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    if (source.article.isNotEmpty)
-                      Text(
-                        source.article,
-                        style: const TextStyle(
-                          fontWeight: FontWeight.bold,
-                          fontSize: 15,
+        top: false,
+        child: Container(
+          decoration: const BoxDecoration(
+            color: Color(0xFFF8F9FC),
+            borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 14, 16, 20),
+            child: SingleChildScrollView(
+              child: Column(
+                children: [
+                  Center(
+                    child: Container(
+                      width: 42,
+                      height: 4,
+                      margin: const EdgeInsets.only(bottom: 14),
+                      decoration: BoxDecoration(
+                        color: Colors.grey.shade300,
+                        borderRadius: BorderRadius.circular(999),
+                      ),
+                    ),
+                  ),
+                  ...message.sources.asMap().entries.map((entry) {
+                    final index = entry.key;
+                    final source = entry.value;
+                    final heading = _referenceHeading(source);
+                    final snippet = source.content.isNotEmpty
+                        ? source.content
+                        : source.contentPreview;
+                    return Padding(
+                      padding: EdgeInsets.only(
+                        bottom: index == message.sources.length - 1 ? 0 : 14,
+                      ),
+                      child: Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.all(16),
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(18),
+                          border: Border.all(color: Colors.grey.shade300),
+                          boxShadow: const [
+                            BoxShadow(
+                              color: Color(0x12000000),
+                              blurRadius: 10,
+                              offset: Offset(0, 5),
+                            ),
+                          ],
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                Container(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 10,
+                                    vertical: 6,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: _primaryCyan.withValues(alpha: 0.10),
+                                    borderRadius: BorderRadius.circular(999),
+                                  ),
+                                  child: Text(
+                                    source.sourceTypeTag(
+                                      isArabic: widget.isArabic,
+                                    ),
+                                    style: TextStyle(
+                                      color: _primaryCyan,
+                                      fontWeight: FontWeight.w800,
+                                      fontSize: 12.5,
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(width: 10),
+                                Expanded(
+                                  child: Text(
+                                    heading,
+                                    style: const TextStyle(
+                                      fontSize: 15.5,
+                                      fontWeight: FontWeight.w800,
+                                      color: Colors.black87,
+                                      height: 1.4,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 14),
+                            _buildReferenceField(
+                              label: _referenceFieldLabel(
+                                'العنوان أو المادة',
+                                'Article or title',
+                              ),
+                              value: source.secondaryDisplayArticle.isNotEmpty
+                                  ? source.secondaryDisplayArticle
+                                  : heading,
+                              valueWeight: FontWeight.w800,
+                            ),
+                            _buildReferenceField(
+                              label: _referenceFieldLabel(
+                                'المستند المعتمد',
+                                'Official document',
+                              ),
+                              value: source.documentTitle.isNotEmpty
+                                  ? source.documentTitle
+                                  : heading,
+                            ),
+                            _buildReferenceField(
+                              label: _referenceFieldLabel('القسم', 'Section'),
+                              value: source.secondaryDisplaySection,
+                            ),
+                            const SizedBox(height: 12),
+                            Container(
+                              width: double.infinity,
+                              padding: const EdgeInsets.all(14),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFFF7F8FC),
+                                borderRadius: BorderRadius.circular(14),
+                                border: Border.all(color: Colors.grey.shade300),
+                              ),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    _referenceFieldLabel(
+                                      'النص المستند إليه',
+                                      'Supporting excerpt',
+                                    ),
+                                    style: TextStyle(
+                                      color: Colors.grey.shade700,
+                                      fontSize: 12.5,
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 8),
+                                  Text(
+                                    snippet,
+                                    style: const TextStyle(
+                                      height: 1.6,
+                                      fontSize: 14,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
                         ),
                       ),
-                    if (source.section.isNotEmpty) ...[
-                      const SizedBox(height: 6),
-                      Text(
-                        source.section,
-                        style: TextStyle(color: Colors.grey[700]),
-                      ),
-                    ],
-                    if (source.documentTitle.isNotEmpty) ...[
-                      const SizedBox(height: 4),
-                      Text(
-                        source.documentTitle,
-                        style: TextStyle(color: Colors.grey[600]),
-                      ),
-                    ],
-                    const SizedBox(height: 10),
-                    Text(
-                      source.content.isNotEmpty
-                          ? source.content
-                          : source.contentPreview,
-                      style: const TextStyle(height: 1.5),
-                    ),
-                  ],
-                ),
-              );
-            },
+                    );
+                  }),
+                ],
+              ),
+            ),
           ),
         ),
       ),
@@ -421,7 +1163,11 @@ class _AIChatPageState extends State<AIChatPage> {
 
   void _scrollToBottom() {
     Future.delayed(const Duration(milliseconds: 100), () {
-      if (_scrollController.hasClients) {
+      if (!mounted || !_scrollController.hasClients) {
+        return;
+      }
+
+      if (_scrollController.position.hasPixels) {
         _scrollController.animateTo(
           _scrollController.position.maxScrollExtent,
           duration: const Duration(milliseconds: 300),
@@ -445,13 +1191,16 @@ class _AIChatPageState extends State<AIChatPage> {
                 ? _buildEmptyState()
                 : ListView.builder(
                     controller: _scrollController,
-                    padding: const EdgeInsets.all(16),
+                    padding: const EdgeInsets.fromLTRB(16, 18, 16, 18),
                     itemCount: _messages.length,
                     itemBuilder: (context, index) {
                       return _buildMessageBubble(_messages[index]);
                     },
                   ),
           ),
+          if (_showSuggestedQuestions &&
+              _personalizedSuggestedQuestions.isNotEmpty)
+            _buildStudentAwareSuggestions(),
           if (_showSuggestedQuestions) _buildSuggestedQuestions(),
           if (_isTyping) _buildTypingIndicator(),
           _buildInputArea(),
@@ -533,7 +1282,9 @@ class _AIChatPageState extends State<AIChatPage> {
               PopupMenuItem<String>(
                 value: 'search',
                 child: Text(
-                  widget.isArabic ? 'البحث في اللوائح' : 'Search regulations',
+                  widget.isArabic
+                      ? 'البحث في المصادر الرسمية'
+                      : 'Search official sources',
                 ),
               ),
               PopupMenuItem<String>(
@@ -552,19 +1303,119 @@ class _AIChatPageState extends State<AIChatPage> {
   Widget _buildSuggestedQuestions() {
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
       child: Wrap(
-        spacing: 8,
-        runSpacing: 8,
+        spacing: 10,
+        runSpacing: 10,
         children: _suggestedQuestions
             .map(
-              (question) => ActionChip(
-                label: Text(question),
-                onPressed: () => _sendMessage(presetText: question),
+              (question) => _buildSuggestionChip(
+                question: question,
+                icon: Icons.bolt_outlined,
               ),
             )
             .toList(growable: false),
       ),
+    );
+  }
+
+  Widget _buildStudentAwareSuggestions() {
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: Colors.grey.shade200),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.05),
+            blurRadius: 12,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 40,
+                height: 40,
+                decoration: BoxDecoration(
+                  color: _primaryCyan.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Icon(
+                  Icons.auto_awesome_outlined,
+                  color: _primaryCyan,
+                  size: 20,
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      widget.isArabic ? 'مقترح لك' : 'Suggested for You',
+                      style: const TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      _studentAwareHintText(),
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: Colors.grey[600],
+                        height: 1.4,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Wrap(
+            spacing: 10,
+            runSpacing: 10,
+            children: _personalizedSuggestedQuestions
+                .map(
+                  (question) => _buildSuggestionChip(
+                    question: question,
+                    icon: Icons.auto_awesome,
+                  ),
+                )
+                .toList(growable: false),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSuggestionChip({
+    required String question,
+    required IconData icon,
+  }) {
+    return ActionChip(
+      avatar: Icon(icon, size: 16, color: _primaryCyan),
+      side: BorderSide(color: _primaryCyan.withValues(alpha: 0.18)),
+      backgroundColor: _primaryCyan.withValues(alpha: 0.06),
+      labelStyle: TextStyle(
+        color: Colors.black87,
+        fontSize: 12.8,
+        fontWeight: FontWeight.w600,
+        height: widget.isArabic ? 1.45 : 1.3,
+      ),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+      materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+      onPressed: () => _sendMessage(presetText: question),
+      label: Text(question),
     );
   }
 
@@ -601,8 +1452,11 @@ class _AIChatPageState extends State<AIChatPage> {
 
   Widget _buildMessageBubble(ChatMessage message) {
     final isUser = message.isUser;
-    final sourceText = _buildSourceText(message);
     final inlineReferenceText = _inlineReferenceText(message);
+    final referenceSummary = _buildReferenceSummaryBlock(
+      message,
+      inlineReferenceText,
+    );
     final visibleText =
         message.isShowingTranslation && message.translatedText != null
         ? message.translatedText!
@@ -611,9 +1465,9 @@ class _AIChatPageState extends State<AIChatPage> {
     return Align(
       alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
       child: Container(
-        margin: const EdgeInsets.only(bottom: 12),
+        margin: const EdgeInsets.only(bottom: 14),
         constraints: BoxConstraints(
-          maxWidth: MediaQuery.of(context).size.width * 0.75,
+          maxWidth: MediaQuery.of(context).size.width * 0.78,
         ),
         child: Row(
           mainAxisSize: MainAxisSize.min,
@@ -635,7 +1489,7 @@ class _AIChatPageState extends State<AIChatPage> {
               child: Container(
                 padding: const EdgeInsets.symmetric(
                   horizontal: 16,
-                  vertical: 12,
+                  vertical: 14,
                 ),
                 decoration: BoxDecoration(
                   gradient: isUser
@@ -647,18 +1501,18 @@ class _AIChatPageState extends State<AIChatPage> {
                       : null,
                   color: isUser ? null : Colors.white,
                   borderRadius: BorderRadius.only(
-                    topLeft: const Radius.circular(20),
-                    topRight: const Radius.circular(20),
-                    bottomLeft: Radius.circular(isUser ? 20 : 4),
-                    bottomRight: Radius.circular(isUser ? 4 : 20),
+                    topLeft: const Radius.circular(22),
+                    topRight: const Radius.circular(22),
+                    bottomLeft: Radius.circular(isUser ? 22 : 6),
+                    bottomRight: Radius.circular(isUser ? 6 : 22),
                   ),
                   boxShadow: [
                     BoxShadow(
                       color: (isUser ? _primaryCyan : Colors.grey).withValues(
-                        alpha: 0.2,
+                        alpha: isUser ? 0.22 : 0.16,
                       ),
-                      blurRadius: 8,
-                      offset: const Offset(0, 3),
+                      blurRadius: 12,
+                      offset: const Offset(0, 5),
                     ),
                   ],
                 ),
@@ -666,84 +1520,55 @@ class _AIChatPageState extends State<AIChatPage> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Text(
-                      visibleText,
-                      style: TextStyle(
-                        color: isUser ? Colors.white : Colors.black87,
-                        fontSize: 15,
-                        height: 1.4,
-                      ),
-                    ),
-                    if (sourceText != null) ...[
-                      const SizedBox(height: 8),
-                      Text(
-                        sourceText,
-                        style: TextStyle(
-                          color: isUser ? Colors.white70 : Colors.black54,
-                          fontSize: 12,
-                          height: 1.4,
-                        ),
-                      ),
-                    ],
-                    if (sourceText == null && inlineReferenceText != null) ...[
-                      const SizedBox(height: 8),
-                      Text(
-                        inlineReferenceText,
-                        style: TextStyle(
-                          color: isUser ? Colors.white70 : Colors.black54,
-                          fontSize: 12,
-                          height: 1.4,
-                        ),
-                      ),
+                    Text(visibleText, style: _messageBodyStyle(isUser)),
+                    if (referenceSummary != null) ...[
+                      const SizedBox(height: 12),
+                      referenceSummary,
                     ],
                     if (!isUser &&
                         (message.sources.isNotEmpty ||
                             message.canFeedback ||
                             message.canTranslate)) ...[
-                      const SizedBox(height: 8),
+                      const SizedBox(height: 10),
                       Wrap(
-                        spacing: 4,
-                        runSpacing: 4,
+                        spacing: 8,
+                        runSpacing: 8,
                         children: [
                           if (message.canTranslate)
-                            TextButton(
+                            _buildMessageActionButton(
+                              label: _translateButtonLabel(message),
+                              icon: Icons.translate_outlined,
                               onPressed: message.isTranslating
                                   ? null
                                   : () => _toggleMessageTranslation(message),
-                              child: Text(_translateButtonLabel(message)),
                             ),
                           if (message.sources.isNotEmpty)
-                            TextButton(
+                            _buildMessageActionButton(
+                              label: widget.isArabic
+                                  ? 'عرض المرجع الكامل'
+                                  : 'View full reference',
+                              icon: Icons.visibility_outlined,
                               onPressed: () => _showReferenceView(message),
-                              child: Text(
-                                widget.isArabic
-                                    ? 'عرض المرجع الكامل'
-                                    : 'View full reference',
-                              ),
                             ),
                           if (message.canFeedback)
-                            IconButton(
-                              icon: Icon(
-                                Icons.thumb_up_alt_outlined,
-                                color: message.helpful == true
-                                    ? _primaryCyan
-                                    : Colors.grey[600],
-                              ),
+                            _buildMessageActionButton(
+                              label: widget.isArabic ? 'مفيد' : 'Helpful',
+                              icon: Icons.thumb_up_alt_outlined,
+                              foregroundColor: message.helpful == true
+                                  ? _primaryCyan
+                                  : Colors.grey.shade700,
                               onPressed: () => _submitFeedback(message, true),
-                              tooltip: widget.isArabic ? 'مفيد' : 'Helpful',
                             ),
                           if (message.canFeedback)
-                            IconButton(
-                              icon: Icon(
-                                Icons.thumb_down_alt_outlined,
-                                color: message.helpful == false
-                                    ? Colors.redAccent
-                                    : Colors.grey[600],
-                              ),
-                              onPressed: () => _submitFeedback(message, false),
-                              tooltip: widget.isArabic
+                            _buildMessageActionButton(
+                              label: widget.isArabic
                                   ? 'غير مفيد'
                                   : 'Not helpful',
+                              icon: Icons.thumb_down_alt_outlined,
+                              foregroundColor: message.helpful == false
+                                  ? Colors.redAccent
+                                  : Colors.grey.shade700,
+                              onPressed: () => _submitFeedback(message, false),
                             ),
                         ],
                       ),
@@ -764,15 +1589,6 @@ class _AIChatPageState extends State<AIChatPage> {
         ),
       ),
     );
-  }
-
-  String? _buildSourceText(ChatMessage message) {
-    if (message.isUser || message.sources.isEmpty) {
-      return null;
-    }
-
-    final label = widget.isArabic ? 'المرجع: ' : 'Source: ';
-    return '$label${message.sources.map((source) => source.toDisplayString()).take(2).join('\n')}';
   }
 
   Widget _buildTypingIndicator() {
@@ -811,7 +1627,7 @@ class _AIChatPageState extends State<AIChatPage> {
 
   Widget _buildInputArea() {
     return Container(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
       decoration: BoxDecoration(
         color: Colors.white,
         boxShadow: [
@@ -832,9 +1648,9 @@ class _AIChatPageState extends State<AIChatPage> {
             Expanded(
               child: Container(
                 decoration: BoxDecoration(
-                  color: Colors.grey[100],
+                  color: const Color(0xFFF7F8FC),
                   borderRadius: BorderRadius.circular(25),
-                  border: Border.all(color: Colors.grey[300]!),
+                  border: Border.all(color: Colors.grey.shade300),
                 ),
                 child: TextField(
                   controller: _messageController,
@@ -847,7 +1663,7 @@ class _AIChatPageState extends State<AIChatPage> {
                     border: InputBorder.none,
                     contentPadding: const EdgeInsets.symmetric(
                       horizontal: 20,
-                      vertical: 14,
+                      vertical: 15,
                     ),
                   ),
                   onSubmitted: (_) => _sendMessage(),
@@ -889,108 +1705,6 @@ class _AIChatPageState extends State<AIChatPage> {
     _messageController.dispose();
     _scrollController.dispose();
     super.dispose();
-  }
-}
-
-class ChatMessage {
-  final String text;
-  final bool isUser;
-  final DateTime timestamp;
-  final List<AiSourceReference> sources;
-  final bool canFeedback;
-  final bool canTranslate;
-  final bool? helpful;
-  final String? translatedText;
-  final bool isShowingTranslation;
-  final bool isTranslating;
-
-  ChatMessage({
-    required this.text,
-    required this.isUser,
-    required this.timestamp,
-    this.sources = const [],
-    this.canFeedback = false,
-    this.canTranslate = false,
-    this.helpful,
-    this.translatedText,
-    this.isShowingTranslation = false,
-    this.isTranslating = false,
-  });
-
-  static const Object _unset = Object();
-
-  ChatMessage copyWith({
-    String? text,
-    bool? isUser,
-    DateTime? timestamp,
-    List<AiSourceReference>? sources,
-    bool? canFeedback,
-    bool? canTranslate,
-    Object? helpful = _unset,
-    Object? translatedText = _unset,
-    bool? isShowingTranslation,
-    bool? isTranslating,
-  }) {
-    return ChatMessage(
-      text: text ?? this.text,
-      isUser: isUser ?? this.isUser,
-      timestamp: timestamp ?? this.timestamp,
-      sources: sources ?? this.sources,
-      canFeedback: canFeedback ?? this.canFeedback,
-      canTranslate: canTranslate ?? this.canTranslate,
-      helpful: identical(helpful, _unset) ? this.helpful : helpful as bool?,
-      translatedText: identical(translatedText, _unset)
-          ? this.translatedText
-          : translatedText as String?,
-      isShowingTranslation: isShowingTranslation ?? this.isShowingTranslation,
-      isTranslating: isTranslating ?? this.isTranslating,
-    );
-  }
-
-  Map<String, dynamic> toMap() {
-    return {
-      'text': text,
-      'isUser': isUser,
-      'timestamp': timestamp.toIso8601String(),
-      'sources': sources
-          .map((source) => source.toJson())
-          .toList(growable: false),
-      'canFeedback': canFeedback,
-      'canTranslate': canTranslate,
-      'helpful': helpful,
-      'translatedText': translatedText,
-      'isShowingTranslation': isShowingTranslation,
-      'isTranslating': isTranslating,
-    };
-  }
-
-  factory ChatMessage.fromMap(Map<String, dynamic> map) {
-    final rawSources = map['sources'];
-    return ChatMessage(
-      text: (map['text'] ?? '').toString(),
-      isUser: map['isUser'] == true,
-      timestamp:
-          DateTime.tryParse((map['timestamp'] ?? '').toString()) ??
-          DateTime.now(),
-      sources: rawSources is List
-          ? rawSources
-                .whereType<Map>()
-                .map(
-                  (item) => AiSourceReference.fromJson(
-                    Map<String, dynamic>.from(item),
-                  ),
-                )
-                .toList(growable: false)
-          : const [],
-      canFeedback: map['canFeedback'] == true,
-      canTranslate: map['canTranslate'] == true,
-      helpful: map['helpful'] is bool ? map['helpful'] as bool : null,
-      translatedText: (map['translatedText'] ?? '').toString().trim().isEmpty
-          ? null
-          : (map['translatedText'] ?? '').toString(),
-      isShowingTranslation: map['isShowingTranslation'] == true,
-      isTranslating: false,
-    );
   }
 }
 

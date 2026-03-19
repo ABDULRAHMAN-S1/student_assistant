@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
-import 'ai_api.dart';
+import '../features/ai_assistant/data/repositories/assistant_repository.dart';
+import '../features/ai_assistant/domain/models/regulation_source.dart';
 
 class RegulationSearchPage extends StatefulWidget {
   final bool isArabic;
@@ -13,26 +14,44 @@ class RegulationSearchPage extends StatefulWidget {
 
 class _RegulationSearchPageState extends State<RegulationSearchPage> {
   final TextEditingController _controller = TextEditingController();
+  final AssistantRepository _assistantRepository = const AssistantRepository();
   bool _isLoading = false;
   bool _hasSearched = false;
-  List<AiSourceReference> _results = const [];
+  List<RegulationSource> _results = const [];
 
   Future<void> _search() async {
     final query = _controller.text.trim();
-    if (query.isEmpty || _isLoading) return;
+    if (_isLoading) return;
+    if (query.isEmpty) {
+      setState(() {
+        _results = const [];
+        _hasSearched = false;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            widget.isArabic
+                ? 'أدخل عبارة للبحث في المصادر الرسمية.'
+                : 'Enter a query to search the official sources.',
+          ),
+        ),
+      );
+      return;
+    }
 
     setState(() => _isLoading = true);
     try {
-      final response = await AiApi.searchRegulations(query);
+      final response = await _assistantRepository.searchRegulations(query);
       if (!mounted) return;
       setState(() {
-        _results = response.results;
+        _results = response;
         _hasSearched = true;
         _isLoading = false;
       });
     } catch (_) {
       if (!mounted) return;
       setState(() {
+        _results = const [];
         _isLoading = false;
         _hasSearched = true;
       });
@@ -48,51 +67,102 @@ class _RegulationSearchPageState extends State<RegulationSearchPage> {
     }
   }
 
-  void _showResult(AiSourceReference reference) {
+  void _showResult(RegulationSource reference) {
     showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
+      backgroundColor: Colors.transparent,
       builder: (context) => SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.all(20),
-          child: SingleChildScrollView(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  reference.article.isNotEmpty
-                      ? reference.article
-                      : (reference.title.isNotEmpty
-                            ? reference.title
-                            : reference.documentTitle),
-                  style: const TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.bold,
+        top: false,
+        child: Container(
+          decoration: const BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
+            child: SingleChildScrollView(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Center(
+                    child: Container(
+                      width: 42,
+                      height: 4,
+                      decoration: BoxDecoration(
+                        color: Colors.grey.shade300,
+                        borderRadius: BorderRadius.circular(999),
+                      ),
+                    ),
                   ),
-                ),
-                if (reference.section.isNotEmpty) ...[
-                  const SizedBox(height: 8),
+                  const SizedBox(height: 18),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 6,
+                    ),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF5421D9).withValues(alpha: 0.08),
+                      borderRadius: BorderRadius.circular(999),
+                    ),
+                    child: Text(
+                      reference.sourceTypeTag(isArabic: widget.isArabic),
+                      style: const TextStyle(
+                        color: Color(0xFF5421D9),
+                        fontWeight: FontWeight.w800,
+                        fontSize: 12.5,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 14),
                   Text(
-                    reference.section,
-                    style: TextStyle(color: Colors.grey[700]),
+                    reference.primaryDisplayTitle,
+                    style: const TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.w800,
+                      height: 1.35,
+                    ),
+                  ),
+                  if (reference.secondaryDisplayArticle.isNotEmpty) ...[
+                    const SizedBox(height: 10),
+                    Text(
+                      reference.secondaryDisplayArticle,
+                      style: TextStyle(
+                        color: Colors.grey[700],
+                        height: 1.45,
+                      ),
+                    ),
+                  ],
+                  if (reference.secondaryDisplaySection.isNotEmpty) ...[
+                    const SizedBox(height: 6),
+                    Text(
+                      reference.secondaryDisplaySection,
+                      style: TextStyle(
+                        color: Colors.grey[600],
+                        fontSize: 13.5,
+                        height: 1.4,
+                      ),
+                    ),
+                  ],
+                  const SizedBox(height: 18),
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(14),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFF7F8FC),
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(color: Colors.grey.shade300),
+                    ),
+                    child: Text(
+                      reference.content.isNotEmpty
+                          ? reference.content
+                          : reference.contentPreview,
+                      style: const TextStyle(fontSize: 15, height: 1.6),
+                    ),
                   ),
                 ],
-                if (reference.documentTitle.isNotEmpty) ...[
-                  const SizedBox(height: 6),
-                  Text(
-                    reference.documentTitle,
-                    style: TextStyle(color: Colors.grey[600]),
-                  ),
-                ],
-                const SizedBox(height: 16),
-                Text(
-                  reference.content.isNotEmpty
-                      ? reference.content
-                      : reference.contentPreview,
-                  style: const TextStyle(fontSize: 15, height: 1.5),
-                ),
-              ],
+              ),
             ),
           ),
         ),
@@ -103,36 +173,75 @@ class _RegulationSearchPageState extends State<RegulationSearchPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: const Color(0xFFF7F8FC),
       appBar: AppBar(
-        title: Text(widget.isArabic ? 'البحث في اللوائح' : 'Regulation Search'),
+        backgroundColor: Colors.white,
+        surfaceTintColor: Colors.transparent,
+        elevation: 0,
+        title: Text(
+          widget.isArabic ? 'البحث في المصادر الرسمية' : 'Official Sources Search',
+          style: const TextStyle(fontWeight: FontWeight.w800),
+        ),
       ),
       body: Column(
         children: [
           Padding(
             padding: const EdgeInsets.all(16),
-            child: Row(
-              children: [
-                Expanded(
-                  child: TextField(
-                    controller: _controller,
-                    textAlign: widget.isArabic
-                        ? TextAlign.right
-                        : TextAlign.left,
-                    decoration: InputDecoration(
-                      hintText: widget.isArabic
-                          ? 'ابحث في اللوائح...'
-                          : 'Search regulations...',
-                      border: const OutlineInputBorder(),
-                    ),
-                    onSubmitted: (_) => _search(),
+            child: Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(18),
+                boxShadow: const [
+                  BoxShadow(
+                    color: Color(0x0F000000),
+                    blurRadius: 10,
+                    offset: Offset(0, 4),
                   ),
-                ),
-                const SizedBox(width: 8),
-                ElevatedButton(
-                  onPressed: _isLoading ? null : _search,
-                  child: Text(widget.isArabic ? 'بحث' : 'Search'),
-                ),
-              ],
+                ],
+              ),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: TextField(
+                      controller: _controller,
+                      textAlign: widget.isArabic
+                          ? TextAlign.right
+                          : TextAlign.left,
+                      decoration: InputDecoration(
+                        hintText: widget.isArabic
+                            ? 'ابحث في المصادر الرسمية...'
+                            : 'Search official sources...',
+                        filled: true,
+                        fillColor: const Color(0xFFF7F8FC),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(14),
+                          borderSide: BorderSide.none,
+                        ),
+                        contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 16,
+                          vertical: 14,
+                        ),
+                      ),
+                      onSubmitted: (_) => _search(),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  ElevatedButton(
+                    onPressed: _isLoading ? null : _search,
+                    style: ElevatedButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 18,
+                        vertical: 15,
+                      ),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                    ),
+                    child: Text(widget.isArabic ? 'بحث' : 'Search'),
+                  ),
+                ],
+              ),
             ),
           ),
           if (_isLoading) const LinearProgressIndicator(),
@@ -142,11 +251,13 @@ class _RegulationSearchPageState extends State<RegulationSearchPage> {
                     child: Text(
                       _hasSearched
                           ? (widget.isArabic
-                                ? 'لم أجد نتائج مطابقة في اللوائح.'
-                                : 'No matching regulation results were found.')
+                                ? 'لم أجد نتائج مطابقة في المصادر الرسمية.'
+                                : 'No matching official source results were found.')
                           : (widget.isArabic
-                                ? 'أدخل عبارة للبحث في اللوائح.'
-                                : 'Enter a query to search the regulations.'),
+                                ? 'أدخل عبارة للبحث في المصادر الرسمية.'
+                                : 'Enter a query to search the official sources.'),
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(height: 1.5, fontSize: 14.5),
                     ),
                   )
                 : ListView.separated(
@@ -156,22 +267,36 @@ class _RegulationSearchPageState extends State<RegulationSearchPage> {
                     itemBuilder: (context, index) {
                       final result = _results[index];
                       return Card(
+                        elevation: 0,
+                        color: Colors.white,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(16),
+                          side: BorderSide(color: Colors.grey.shade200),
+                        ),
                         child: ListTile(
+                          contentPadding: const EdgeInsets.symmetric(
+                            horizontal: 16,
+                            vertical: 10,
+                          ),
                           title: Text(
-                            result.article.isNotEmpty
-                                ? result.article
-                                : (result.title.isNotEmpty
-                                      ? result.title
-                                      : result.documentTitle),
+                            '${result.sourceTypeTag(isArabic: widget.isArabic)} ${result.primaryDisplayTitle}',
+                            style: const TextStyle(
+                              fontWeight: FontWeight.w800,
+                              height: 1.35,
+                            ),
                           ),
                           subtitle: Text(
                             [
-                              if (result.section.isNotEmpty) result.section,
+                              if (result.secondaryDisplayArticle.isNotEmpty)
+                                result.secondaryDisplayArticle,
+                              if (result.secondaryDisplaySection.isNotEmpty)
+                                result.secondaryDisplaySection,
                               if (result.contentPreview.isNotEmpty)
                                 result.contentPreview,
                             ].join('\n'),
                             maxLines: 5,
                             overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(height: 1.5),
                           ),
                           onTap: () => _showResult(result),
                         ),

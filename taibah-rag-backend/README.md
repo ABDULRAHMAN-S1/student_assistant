@@ -55,7 +55,15 @@ Install dependencies if needed:
 pip install -r requirements.txt
 ```
 
-Start the API:
+Start the API on Windows in the safest way:
+
+```bash
+python start_backend_windows.py
+```
+
+This launcher keeps `stdout` and `stderr` attached to real log files under `data/logs/`, which avoids fragile detached-console behavior on Windows during lazy model loading.
+
+If you want to run it manually in an active terminal, this still works:
 
 ```bash
 uvicorn app.api:app --host 0.0.0.0 --port 8000 --reload

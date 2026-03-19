@@ -1,6 +1,10 @@
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 
+import 'features/profile/data/demo/demo_profile_repository.dart';
+import 'features/profile/data/local/profile_store.dart';
+import 'features/profile/domain/models/academic_context.dart';
+import 'features/profile/domain/models/student_profile.dart';
 import 'login_page.dart';
 
 class CreateAccountScreen extends StatefulWidget {
@@ -133,7 +137,33 @@ class _CreateAccountScreenState extends State<CreateAccountScreen> {
     );
   }
 
-  void _submitForm() {
+  StudentProfile _buildStudentProfile() {
+    final now = DateTime.now();
+    final academicContext = AcademicContext(
+      specialization: _specializationController.text.trim(),
+      academicLevel: _selectedAcademicLevel,
+      interests: _selectedInterests.toList(growable: false),
+    );
+
+    return StudentProfile(
+      id: _emailController.text.trim().toLowerCase(),
+      fullName: _nameController.text.trim(),
+      email: _emailController.text.trim(),
+      phoneNumber: _phoneController.text.trim(),
+      preferredLanguageCode: widget.isArabic ? 'ar' : 'en',
+      createdAt: now,
+      updatedAt: now,
+      academicContext: academicContext,
+    );
+  }
+
+  Future<void> _persistStudentProfile() async {
+    final profileStore = await ProfileStore.open();
+    final profileRepository = DemoProfileRepository(profileStore: profileStore);
+    await profileRepository.saveProfile(_buildStudentProfile());
+  }
+
+  Future<void> _submitForm() async {
     if (!_formKey.currentState!.validate()) return;
 
     if (!_agreedToTerms) {
@@ -157,6 +187,18 @@ class _CreateAccountScreenState extends State<CreateAccountScreen> {
     };
 
     debugPrint('Form Data: $formData');
+
+    try {
+      await _persistStudentProfile();
+    } catch (_) {
+      _showErrorSnackBar(
+        _getText(
+          'تعذر حفظ بيانات الطالب محلياً',
+          'Could not save student data locally',
+        ),
+      );
+      return;
+    }
 
     widget.onRegisterSuccess?.call();
     _showSuccessDialog();
