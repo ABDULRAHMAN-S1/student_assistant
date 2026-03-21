@@ -37,6 +37,10 @@ BULLET_RE = re.compile(r"^[-•]\s+.+$")
 class ImproveStats:
     chunks_split: int = 0
     empty_sections_fixed: int = 0
+    heading_only_merged: int = 0
+    tiny_chunks_merged: int = 0
+    low_signal_flagged: int = 0
+    partial_flagged: int = 0
 
 
 @dataclass
@@ -187,10 +191,106 @@ def combine_lines(prefix_lines: list[str], blocks: list[ContentBlock]) -> str:
     return "\n".join(dedupe_consecutive_lines(lines)).strip()
 
 
+def split_content_lines(content: str) -> list[str]:
+    return [normalize_line(line) for line in str(content).splitlines() if normalize_line(line)]
+
+
+def is_substantive_line(line: str) -> bool:
+    normalized = normalize_line(line)
+    if not normalized or normalized == UNREADABLE_PLACEHOLDER:
+        return False
+    return not is_anchor_line(normalized)
+
+
+def substantive_lines(lines: list[str]) -> list[str]:
+    return [line for line in lines if is_substantive_line(line)]
+
+
+def content_is_partial(content: str) -> bool:
+    return UNREADABLE_PLACEHOLDER in str(content)
+
+
+def is_heading_only_content(content: str) -> bool:
+    lines = split_content_lines(content)
+    return bool(lines) and not substantive_lines(lines)
+
+
+def is_tiny_low_signal_content(content: str) -> bool:
+    lines = split_content_lines(content)
+    body_lines = substantive_lines(lines)
+    if not body_lines:
+        return False
+    body_text = "\n".join(body_lines).strip()
+    return len(body_text) < MIN_CHUNK_CHARS and len(body_text.split()) < 18
+
+
+def merge_chunk_text(left: str, right: str) -> str:
+    merged_lines = dedupe_consecutive_lines(split_content_lines(left) + [""] + split_content_lines(right))
+    return "\n".join(merged_lines).strip()
+
+
+def can_merge_chunks(left: str, right: str) -> bool:
+    merged = merge_chunk_text(left, right)
+    return len(merged) <= (MAX_CHUNK_CHARS + 180)
+
+
+def refine_split_contents(contents: list[str], stats: ImproveStats) -> list[str]:
+    refined = [content.strip() for content in contents if content and content.strip()]
+    if len(refined) <= 1:
+        return refined
+
+    index = 0
+    while index < len(refined):
+        current = refined[index]
+        heading_only = is_heading_only_content(current)
+        tiny_low_signal = is_tiny_low_signal_content(current)
+        if not heading_only and not tiny_low_signal:
+            index += 1
+            continue
+
+        merged = False
+        if index + 1 < len(refined) and can_merge_chunks(current, refined[index + 1]):
+            refined[index + 1] = merge_chunk_text(current, refined[index + 1])
+            refined.pop(index)
+            merged = True
+        elif index > 0 and can_merge_chunks(refined[index - 1], current):
+            refined[index - 1] = merge_chunk_text(refined[index - 1], current)
+            refined.pop(index)
+            index -= 1
+            merged = True
+
+        if merged:
+            if heading_only:
+                stats.heading_only_merged += 1
+            else:
+                stats.tiny_chunks_merged += 1
+            continue
+
+        index += 1
+
+    return refined
+
+
+def build_chunk_flags(content: str) -> list[str]:
+    flags: list[str] = []
+    if content_is_partial(content):
+        flags.append("partial_chunk")
+    if is_heading_only_content(content):
+        flags.append("heading_only_chunk")
+    elif is_tiny_low_signal_content(content):
+        flags.append("low_signal_chunk")
+    return flags
+
+
 def build_entries_from_contents(entry: dict[str, Any], contents: list[str]) -> list[dict[str, Any]]:
     if len(contents) == 1:
         single = dict(entry)
         single["content"] = contents[0]
+        single["status"] = "partial" if content_is_partial(contents[0]) else entry.get("status", "complete")
+        flags = build_chunk_flags(contents[0])
+        if flags:
+            existing_flags = [flag for flag in single.get("qa_flags", []) if isinstance(flag, str)]
+            single["qa_flags"] = list(dict.fromkeys([*existing_flags, *flags]))
         return [single]
 
     updated_entries: list[dict[str, Any]] = []
@@ -198,6 +298,11 @@ def build_entries_from_contents(entry: dict[str, Any], contents: list[str]) -> l
         improved = dict(entry)
         improved["chunk_id"] = f"{entry['chunk_id']}-{index:02d}"
         improved["content"] = content
+        improved["status"] = "partial" if content_is_partial(content) else entry.get("status", "complete")
+        flags = build_chunk_flags(content)
+        if flags:
+            existing_flags = [flag for flag in improved.get("qa_flags", []) if isinstance(flag, str)]
+            improved["qa_flags"] = list(dict.fromkeys([*existing_flags, *flags]))
         updated_entries.append(improved)
     return updated_entries
 
@@ -403,9 +508,17 @@ def improve_entries(entries: list[dict[str, Any]]) -> tuple[list[dict[str, Any]]
             item_count = sum(1 for block in blocks if block.kind == "item")
             split_contents = split_list_entry(updated_entry, blocks) if item_count else split_text_entry(updated_entry, blocks)
 
+        split_contents = refine_split_contents(split_contents, stats)
+
         new_entries = build_entries_from_contents(updated_entry, split_contents)
         if len(new_entries) > 1:
             stats.chunks_split += 1
+        for improved_entry in new_entries:
+            qa_flags = [flag for flag in improved_entry.get("qa_flags", []) if isinstance(flag, str)]
+            if "low_signal_chunk" in qa_flags or "heading_only_chunk" in qa_flags:
+                stats.low_signal_flagged += 1
+            if "partial_chunk" in qa_flags:
+                stats.partial_flagged += 1
         improved_entries.extend(new_entries)
 
     return improved_entries, stats
@@ -463,6 +576,10 @@ def main() -> None:
                 "improved_chunk_count": len(improved_entries),
                 "chunks_split": stats.chunks_split,
                 "empty_sections_fixed": stats.empty_sections_fixed,
+                "heading_only_merged": stats.heading_only_merged,
+                "tiny_chunks_merged": stats.tiny_chunks_merged,
+                "low_signal_flagged": stats.low_signal_flagged,
+                "partial_flagged": stats.partial_flagged,
             },
             ensure_ascii=False,
             indent=2,

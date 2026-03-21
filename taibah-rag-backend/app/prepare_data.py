@@ -65,6 +65,15 @@ class ProcessingStats:
 
 
 @dataclass
+class ChunkQaSummary:
+    heading_only_removed: int = 0
+    duplicate_chunks_removed: int = 0
+    tiny_chunks_flagged: int = 0
+    partial_chunks_flagged: int = 0
+    missing_metadata_flagged: int = 0
+
+
+@dataclass
 class DocumentContext:
     chapter: str = ""
     section: str = ""
@@ -441,6 +450,25 @@ def is_colon_heading(line: str, next_line: str) -> bool:
     return bool(next_line and (next_line.startswith("-") or CLAUSE_RE.match(next_line) or next_line == UNREADABLE_PLACEHOLDER))
 
 
+def is_heading_like_line(line: str) -> bool:
+    normalized = normalize_line(line)
+    if not normalized or normalized == UNREADABLE_PLACEHOLDER:
+        return False
+    if any(
+        (
+            CHAPTER_RE.match(normalized),
+            EXEC_RULE_RE.match(normalized),
+            ARTICLE_RE.match(normalized),
+            SECTION_RE.match(normalized),
+            CLAUSE_RE.match(normalized),
+        )
+    ):
+        return True
+    if normalized.endswith((":", "：")) and len(normalized.split()) <= 10:
+        return True
+    return False
+
+
 def is_faq_question_line(line: str, next_line: str) -> bool:
     if not line or line == UNREADABLE_PLACEHOLDER:
         return False
@@ -657,6 +685,76 @@ def strip_prefix_lines(content_lines: list[str], prefix_lines: list[str]) -> lis
     return remaining
 
 
+def normalize_chunk_content(content: str) -> str:
+    return canonical_line(content.replace("\n", " "))
+
+
+def extract_body_lines(entry: dict[str, Any]) -> list[str]:
+    prefix_lines = build_prefix_lines(entry)
+    content_lines = [normalize_line(line) for line in str(entry.get("content", "")).splitlines()]
+    body_lines = strip_prefix_lines(content_lines, prefix_lines)
+    return [line for line in body_lines if line]
+
+
+def collect_chunk_qa_flags(entry: dict[str, Any]) -> list[str]:
+    body_lines = extract_body_lines(entry)
+    substantive_lines = [line for line in body_lines if line != UNREADABLE_PLACEHOLDER]
+    body_text = "\n".join(substantive_lines).strip()
+    body_word_count = count_words(body_text)
+
+    flags: list[str] = []
+    if entry.get("status") == "partial":
+        flags.append("partial_chunk")
+    if not str(entry.get("document_title", "")).strip():
+        flags.append("missing_title")
+    if not str(entry.get("section", "")).strip() and not str(entry.get("article", "")).strip():
+        flags.append("missing_locator")
+    if not substantive_lines or all(is_heading_like_line(line) for line in substantive_lines):
+        flags.append("heading_only")
+    elif body_word_count and body_word_count < 12:
+        flags.append("tiny_chunk")
+
+    deduped_flags: list[str] = []
+    for flag in flags:
+        if flag not in deduped_flags:
+            deduped_flags.append(flag)
+    return deduped_flags
+
+
+def apply_chunk_qa(source_file: str, entries: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], ChunkQaSummary]:
+    summary = ChunkQaSummary()
+    filtered_entries: list[dict[str, Any]] = []
+    seen_contents: set[str] = set()
+
+    for entry in entries:
+        qa_flags = collect_chunk_qa_flags(entry)
+        normalized_content = normalize_chunk_content(str(entry.get("content", "")))
+
+        if normalized_content and normalized_content in seen_contents:
+            summary.duplicate_chunks_removed += 1
+            continue
+        if "heading_only" in qa_flags:
+            summary.heading_only_removed += 1
+            continue
+
+        if normalized_content:
+            seen_contents.add(normalized_content)
+
+        if "tiny_chunk" in qa_flags:
+            summary.tiny_chunks_flagged += 1
+        if "partial_chunk" in qa_flags:
+            summary.partial_chunks_flagged += 1
+        if "missing_title" in qa_flags or "missing_locator" in qa_flags:
+            summary.missing_metadata_flagged += 1
+
+        improved_entry = dict(entry)
+        if qa_flags:
+            improved_entry["qa_flags"] = qa_flags
+        filtered_entries.append(improved_entry)
+
+    return assign_chunk_ids(source_file, filtered_entries), summary
+
+
 def split_large_block(block_text: str) -> list[str]:
     block_text = block_text.strip()
     if not block_text:
@@ -800,10 +898,15 @@ def rebalance_entries(source_file: str, base_entries: list[dict[str, Any]]) -> l
             item["status"] = "partial" if UNREADABLE_PLACEHOLDER in chunk_content else "complete"
             final_entries.append(item)
 
-    return assign_chunk_ids(source_file, final_entries)
+    return final_entries
 
 
-def build_notes(stats: ProcessingStats, title_source: str, partial_chunks: int) -> list[str]:
+def build_notes(
+    stats: ProcessingStats,
+    title_source: str,
+    partial_chunks: int,
+    qa_summary: ChunkQaSummary,
+) -> list[str]:
     notes: list[str] = []
     notes.append(
         "العنوان تم التقاطه من الحقول التعريفية."
@@ -826,6 +929,14 @@ def build_notes(stats: ProcessingStats, title_source: str, partial_chunks: int) 
         )
     if partial_chunks:
         notes.append(f"يوجد {partial_chunks} مقطعًا بحالة partial.")
+    if qa_summary.heading_only_removed:
+        notes.append(f"تم استبعاد {qa_summary.heading_only_removed} مقطعًا كان عبارة عن عناوين فقط.")
+    if qa_summary.duplicate_chunks_removed:
+        notes.append(f"تم استبعاد {qa_summary.duplicate_chunks_removed} مقطعًا مكررًا مطابقًا.")
+    if qa_summary.tiny_chunks_flagged:
+        notes.append(f"تم وسم {qa_summary.tiny_chunks_flagged} مقطعًا قصيرًا منخفض الإشارة للمراجعة.")
+    if qa_summary.missing_metadata_flagged:
+        notes.append(f"تم وسم {qa_summary.missing_metadata_flagged} مقطعًا بنقص في محددات التتبع أو العنوان.")
     if not any(
         (
             stats.metadata_removed,
@@ -834,6 +945,10 @@ def build_notes(stats: ProcessingStats, title_source: str, partial_chunks: int) 
             stats.duplicate_lines_removed,
             stats.unreadable_lines_normalized,
             partial_chunks,
+            qa_summary.heading_only_removed,
+            qa_summary.duplicate_chunks_removed,
+            qa_summary.tiny_chunks_flagged,
+            qa_summary.missing_metadata_flagged,
         )
     ):
         notes.append("لم يتم رصد ضوضاء ملحوظة تتطلب تنظيفًا إضافيًا.")
@@ -918,16 +1033,22 @@ def load_existing_manifest_documents(existing_entries: list[dict[str, Any]]) -> 
     return manifest_documents
 
 
-def load_raw_documents(skip_sources: set[str] | None = None, skip_hashes: set[str] | None = None) -> list[dict[str, Any]]:
+def list_raw_source_files() -> list[str]:
+    ensure_directories()
+    return [
+        path.name
+        for path in sorted(RAW_DIR.iterdir())
+        if path.is_file() and path.suffix.lower() in SUPPORTED_EXTENSIONS
+    ]
+
+
+def load_raw_documents(skip_hashes: set[str] | None = None) -> list[dict[str, Any]]:
     ensure_directories()
     documents: list[dict[str, Any]] = []
-    skip_sources = skip_sources or set()
     skip_hashes = skip_hashes or set()
 
     for path in sorted(RAW_DIR.iterdir()):
         if not path.is_file() or path.suffix.lower() not in SUPPORTED_EXTENSIONS:
-            continue
-        if path.name in skip_sources:
             continue
 
         raw_text = path.read_text(encoding="utf-8", errors="replace")
@@ -957,10 +1078,11 @@ def load_raw_documents(skip_sources: set[str] | None = None, skip_hashes: set[st
             while cleaned_lines and cleaned_lines[0] == "":
                 cleaned_lines.pop(0)
 
-        entries = rebalance_entries(
+        base_entries = rebalance_entries(
             path.name,
             build_entries(path.name, document_title, doc_type, cleaned_lines),
         )
+        entries, qa_summary = apply_chunk_qa(path.name, base_entries)
         partial_chunks = sum(1 for entry in entries if entry["status"] == "partial")
         manifest_entry = {
             "source_file": path.name,
@@ -970,7 +1092,19 @@ def load_raw_documents(skip_sources: set[str] | None = None, skip_hashes: set[st
             "source_hash": source_hash,
             "cleaned_hash": cleaned_hash,
             "status": "partial" if partial_chunks else "complete",
-            "notes": build_notes(stats, title_source=title_source, partial_chunks=partial_chunks),
+            "qa_summary": {
+                "heading_only_removed": qa_summary.heading_only_removed,
+                "duplicate_chunks_removed": qa_summary.duplicate_chunks_removed,
+                "tiny_chunks_flagged": qa_summary.tiny_chunks_flagged,
+                "partial_chunks_flagged": qa_summary.partial_chunks_flagged,
+                "missing_metadata_flagged": qa_summary.missing_metadata_flagged,
+            },
+            "notes": build_notes(
+                stats,
+                title_source=title_source,
+                partial_chunks=partial_chunks,
+                qa_summary=qa_summary,
+            ),
         }
 
         documents.append(
@@ -990,29 +1124,32 @@ def save_processed_output(
     existing_entries: list[dict[str, Any]],
     existing_manifest_documents: list[dict[str, Any]],
     new_documents: list[dict[str, Any]],
+    active_sources: list[str],
 ) -> tuple[int, int, int]:
     ensure_directories()
+    active_source_set = set(active_sources)
+    replaced_sources = {document["source_file"] for document in new_documents}
     new_entries = [entry for document in new_documents for entry in document["entries"]]
-    all_entries = [*existing_entries, *new_entries]
+    preserved_entries = [
+        entry
+        for entry in existing_entries
+        if entry.get("source_file") in active_source_set and entry.get("source_file") not in replaced_sources
+    ]
+    all_entries = [*preserved_entries, *new_entries]
 
     manifest_by_source: dict[str, dict[str, Any]] = {}
-    ordered_sources: list[str] = []
     for item in existing_manifest_documents:
         source_file = item.get("source_file", "")
-        if source_file and source_file not in manifest_by_source:
-            ordered_sources.append(source_file)
-        if source_file:
+        if source_file and source_file in active_source_set and source_file not in replaced_sources:
             manifest_by_source[source_file] = dict(item)
 
     for document in new_documents:
         manifest_item = dict(document["manifest"])
         source_file = manifest_item.get("source_file", "")
-        if source_file and source_file not in manifest_by_source:
-            ordered_sources.append(source_file)
         if source_file:
             manifest_by_source[source_file] = manifest_item
 
-    manifest_documents = [manifest_by_source[source] for source in ordered_sources if source in manifest_by_source]
+    manifest_documents = [manifest_by_source[source] for source in active_sources if source in manifest_by_source]
 
     with OUTPUT_JSONL_PATH.open("w", encoding="utf-8") as file:
         for entry in all_entries:
@@ -1048,20 +1185,31 @@ def main() -> None:
     existing_manifest_documents = (
         [] if args.full_rebuild else load_existing_manifest_documents(existing_entries)
     )
-    processed_sources = {
-        entry.get("source_file", "")
-        for entry in existing_entries
-        if entry.get("source_file")
+    active_sources = list_raw_source_files()
+    existing_sources = {
+        document.get("source_file", "")
+        for document in existing_manifest_documents
+        if document.get("source_file")
     }
     processed_hashes = extract_processed_hashes(existing_manifest_documents)
 
-    documents = load_raw_documents(
-        skip_sources=processed_sources if not args.full_rebuild else set(),
-        skip_hashes=processed_hashes if not args.full_rebuild else set(),
-    )
+    documents = load_raw_documents(skip_hashes=processed_hashes if not args.full_rebuild else set())
     if not documents:
-        if args.full_rebuild and not processed_sources:
+        if args.full_rebuild and not active_sources:
             print("No UTF-8 .txt files were found in data/raw.")
+            return
+        removed_sources = existing_sources - set(active_sources)
+        if removed_sources:
+            document_count, new_chunk_count, total_chunk_count = save_processed_output(
+                existing_entries,
+                existing_manifest_documents,
+                [],
+                active_sources,
+            )
+            print(f"Pruned {len(removed_sources)} stale source file(s) from processed output.")
+            print(f"Processed output now contains {total_chunk_count} total chunk(s).")
+            print(f"Saved JSONL to {OUTPUT_JSONL_PATH}")
+            print(f"Saved manifest to {MANIFEST_PATH}")
             return
         print("No new UTF-8 .txt files were detected in data/raw.")
         print(f"Processed output remains at {len(existing_entries)} chunk(s).")
@@ -1071,6 +1219,7 @@ def main() -> None:
         existing_entries,
         existing_manifest_documents,
         documents,
+        active_sources,
     )
     print(f"Processed {document_count} new source file(s) into {new_chunk_count} new JSONL entries.")
     print(f"Processed output now contains {total_chunk_count} total chunk(s).")

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../features/ai_assistant/data/local/chat_history_store.dart';
 import '../features/ai_assistant/data/repositories/assistant_repository.dart';
@@ -685,6 +686,141 @@ class _AIChatPageState extends State<AIChatPage> {
     return source.sourceTypeLabel(isArabic: widget.isArabic);
   }
 
+  String _normalizeReferenceKeyPart(String value) {
+    return value.trim().toLowerCase().replaceAll(RegExp(r'\s+'), ' ');
+  }
+
+  List<RegulationSource> _dedupeSources(List<RegulationSource> sources) {
+    final grouped = <String, RegulationSource>{};
+
+    for (final source in sources) {
+      final snippet = source.content.isNotEmpty
+          ? source.content
+          : source.contentPreview;
+      final key = [
+        _normalizeReferenceKeyPart(source.docType),
+        _normalizeReferenceKeyPart(source.documentTitle),
+        _normalizeReferenceKeyPart(source.article),
+        _normalizeReferenceKeyPart(source.cleanedSection),
+      ].join('|');
+
+      final existing = grouped[key];
+      if (existing == null) {
+        grouped[key] = source;
+        continue;
+      }
+
+      final existingSnippet = existing.content.isNotEmpty
+          ? existing.content
+          : existing.contentPreview;
+      if (snippet.length > existingSnippet.length) {
+        grouped[key] = source;
+      }
+    }
+
+    return grouped.values.toList(growable: false);
+  }
+
+  String _mixedScriptSafeText(String text) {
+    return text.replaceAllMapped(
+      RegExp(r'\b[A-Za-z]{1,4}\b'),
+      (match) => '\u2066${match.group(0)}\u2069',
+    );
+  }
+
+  Widget _buildMixedScriptText(
+    String text, {
+    required TextStyle style,
+    TextAlign? textAlign,
+    int? maxLines,
+    TextOverflow? overflow,
+  }) {
+    return Text(
+      _mixedScriptSafeText(text),
+      textDirection: widget.isArabic ? TextDirection.rtl : TextDirection.ltr,
+      textAlign:
+          textAlign ?? (widget.isArabic ? TextAlign.right : TextAlign.left),
+      maxLines: maxLines,
+      overflow: overflow,
+      style: style,
+    );
+  }
+
+  bool _isListLikeMessage(String text) {
+    final trimmed = text.trimLeft();
+    return trimmed.contains('\n- ') || trimmed.startsWith('- ');
+  }
+
+  bool _isShortAnswerText(String text) {
+    final normalized = text.trim();
+    if (normalized.isEmpty || _isListLikeMessage(normalized)) {
+      return false;
+    }
+    return normalized.length <= 90 && !normalized.contains('\n');
+  }
+
+  Widget _buildMessageTextContent(String text, {required bool isUser}) {
+    final baseStyle = _messageBodyStyle(isUser);
+    final emphasisStyle = baseStyle.copyWith(
+      fontSize: isUser ? baseStyle.fontSize : 15.6,
+      fontWeight: FontWeight.w600,
+      height: widget.isArabic ? 1.72 : 1.54,
+    );
+
+    if (_isListLikeMessage(text)) {
+      final lines = text
+          .split('\n')
+          .map((line) => line.trim())
+          .where((line) => line.isNotEmpty)
+          .toList(growable: false);
+      final intro = lines.where((line) => !line.startsWith('- ')).join(' ');
+      final bullets = lines
+          .where((line) => line.startsWith('- '))
+          .map((line) => line.substring(2).trim())
+          .where((line) => line.isNotEmpty)
+          .toList(growable: false);
+
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (intro.isNotEmpty) _buildMixedScriptText(intro, style: baseStyle),
+          if (intro.isNotEmpty && bullets.isNotEmpty) const SizedBox(height: 8),
+          ...bullets.map(
+            (bullet) => Padding(
+              padding: const EdgeInsets.only(bottom: 6),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.only(top: 7),
+                    child: Container(
+                      width: 5,
+                      height: 5,
+                      decoration: BoxDecoration(
+                        color: isUser ? Colors.white : _primaryCyan,
+                        shape: BoxShape.circle,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: _buildMixedScriptText(bullet, style: baseStyle),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      );
+    }
+
+    return _buildMixedScriptText(
+      text,
+      style: _isShortAnswerText(text) ? emphasisStyle : baseStyle,
+    );
+  }
+
   String _compactReferenceLine(RegulationSource source) {
     final heading = _referenceHeading(source);
     final parts = <String>[
@@ -726,7 +862,7 @@ class _AIChatPageState extends State<AIChatPage> {
             ),
           ),
           const SizedBox(height: 4),
-          Text(
+          _buildMixedScriptText(
             value,
             style: TextStyle(
               color: valueColor ?? Colors.black87,
@@ -771,8 +907,10 @@ class _AIChatPageState extends State<AIChatPage> {
       inlineLines.removeAt(0);
     }
 
+    final dedupedSources = _dedupeSources(message.sources);
+
     final lines = message.sources.isNotEmpty
-        ? message.sources
+        ? dedupedSources
               .map(_compactReferenceLine)
               .take(3)
               .toList(growable: false)
@@ -818,7 +956,7 @@ class _AIChatPageState extends State<AIChatPage> {
           ...lines.map(
             (line) => Padding(
               padding: const EdgeInsets.only(bottom: 6),
-              child: Text(
+              child: _buildMixedScriptText(
                 line,
                 style: TextStyle(
                   color: Colors.black87,
@@ -842,16 +980,16 @@ class _AIChatPageState extends State<AIChatPage> {
     final resolvedColor = foregroundColor ?? Colors.grey.shade700;
     return TextButton.icon(
       onPressed: onPressed,
-      icon: Icon(icon, size: 16, color: resolvedColor),
+      icon: Icon(icon, size: 15, color: resolvedColor),
       label: Text(label),
       style: TextButton.styleFrom(
         foregroundColor: resolvedColor,
         backgroundColor: resolvedColor.withValues(alpha: 0.08),
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
         minimumSize: Size.zero,
         tapTargetSize: MaterialTapTargetSize.shrinkWrap,
         visualDensity: const VisualDensity(horizontal: -2, vertical: -2),
-        textStyle: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700),
+        textStyle: const TextStyle(fontSize: 12.0, fontWeight: FontWeight.w700),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       ),
     );
@@ -997,6 +1135,8 @@ class _AIChatPageState extends State<AIChatPage> {
   void _showReferenceView(ChatMessage message) {
     if (message.sources.isEmpty) return;
 
+    final visibleSources = _dedupeSources(message.sources);
+
     showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
@@ -1024,7 +1164,7 @@ class _AIChatPageState extends State<AIChatPage> {
                       ),
                     ),
                   ),
-                  ...message.sources.asMap().entries.map((entry) {
+                  ...visibleSources.asMap().entries.map((entry) {
                     final index = entry.key;
                     final source = entry.value;
                     final heading = _referenceHeading(source);
@@ -1033,7 +1173,7 @@ class _AIChatPageState extends State<AIChatPage> {
                         : source.contentPreview;
                     return Padding(
                       padding: EdgeInsets.only(
-                        bottom: index == message.sources.length - 1 ? 0 : 14,
+                        bottom: index == visibleSources.length - 1 ? 0 : 14,
                       ),
                       child: Container(
                         width: double.infinity,
@@ -1077,7 +1217,7 @@ class _AIChatPageState extends State<AIChatPage> {
                                 ),
                                 const SizedBox(width: 10),
                                 Expanded(
-                                  child: Text(
+                                  child: _buildMixedScriptText(
                                     heading,
                                     style: const TextStyle(
                                       fontSize: 15.5,
@@ -1137,7 +1277,7 @@ class _AIChatPageState extends State<AIChatPage> {
                                     ),
                                   ),
                                   const SizedBox(height: 8),
-                                  Text(
+                                  _buildMixedScriptText(
                                     snippet,
                                     style: const TextStyle(
                                       height: 1.6,
@@ -1461,6 +1601,8 @@ class _AIChatPageState extends State<AIChatPage> {
         message.isShowingTranslation && message.translatedText != null
         ? message.translatedText!
         : _messageBodyText(message);
+    final hasFooterActions =
+        !isUser && (message.sources.isNotEmpty || message.canTranslate);
 
     return Align(
       alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
@@ -1486,94 +1628,97 @@ class _AIChatPageState extends State<AIChatPage> {
               const SizedBox(width: 8),
             ],
             Flexible(
-              child: Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 16,
-                  vertical: 14,
-                ),
-                decoration: BoxDecoration(
-                  gradient: isUser
-                      ? LinearGradient(
-                          colors: [_primaryCyan, _accentPurple],
-                          begin: Alignment.topLeft,
-                          end: Alignment.bottomRight,
-                        )
-                      : null,
-                  color: isUser ? null : Colors.white,
-                  borderRadius: BorderRadius.only(
-                    topLeft: const Radius.circular(22),
-                    topRight: const Radius.circular(22),
-                    bottomLeft: Radius.circular(isUser ? 22 : 6),
-                    bottomRight: Radius.circular(isUser ? 6 : 22),
+              child: GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onLongPressStart: (details) =>
+                    _showMessageCopyMenu(details, visibleText),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 14,
                   ),
-                  boxShadow: [
-                    BoxShadow(
-                      color: (isUser ? _primaryCyan : Colors.grey).withValues(
-                        alpha: isUser ? 0.22 : 0.16,
-                      ),
-                      blurRadius: 12,
-                      offset: const Offset(0, 5),
+                  decoration: BoxDecoration(
+                    gradient: isUser
+                        ? LinearGradient(
+                            colors: [_primaryCyan, _accentPurple],
+                            begin: Alignment.topLeft,
+                            end: Alignment.bottomRight,
+                          )
+                        : null,
+                    color: isUser ? null : Colors.white,
+                    borderRadius: BorderRadius.only(
+                      topLeft: const Radius.circular(22),
+                      topRight: const Radius.circular(22),
+                      bottomLeft: Radius.circular(isUser ? 22 : 6),
+                      bottomRight: Radius.circular(isUser ? 6 : 22),
                     ),
-                  ],
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(visibleText, style: _messageBodyStyle(isUser)),
-                    if (referenceSummary != null) ...[
-                      const SizedBox(height: 12),
-                      referenceSummary,
-                    ],
-                    if (!isUser &&
-                        (message.sources.isNotEmpty ||
-                            message.canFeedback ||
-                            message.canTranslate)) ...[
-                      const SizedBox(height: 10),
-                      Wrap(
-                        spacing: 8,
-                        runSpacing: 8,
-                        children: [
-                          if (message.canTranslate)
-                            _buildMessageActionButton(
-                              label: _translateButtonLabel(message),
-                              icon: Icons.translate_outlined,
-                              onPressed: message.isTranslating
-                                  ? null
-                                  : () => _toggleMessageTranslation(message),
-                            ),
-                          if (message.sources.isNotEmpty)
-                            _buildMessageActionButton(
-                              label: widget.isArabic
-                                  ? 'عرض المرجع الكامل'
-                                  : 'View full reference',
-                              icon: Icons.visibility_outlined,
-                              onPressed: () => _showReferenceView(message),
-                            ),
-                          if (message.canFeedback)
-                            _buildMessageActionButton(
-                              label: widget.isArabic ? 'مفيد' : 'Helpful',
-                              icon: Icons.thumb_up_alt_outlined,
-                              foregroundColor: message.helpful == true
-                                  ? _primaryCyan
-                                  : Colors.grey.shade700,
-                              onPressed: () => _submitFeedback(message, true),
-                            ),
-                          if (message.canFeedback)
-                            _buildMessageActionButton(
-                              label: widget.isArabic
-                                  ? 'غير مفيد'
-                                  : 'Not helpful',
-                              icon: Icons.thumb_down_alt_outlined,
-                              foregroundColor: message.helpful == false
-                                  ? Colors.redAccent
-                                  : Colors.grey.shade700,
-                              onPressed: () => _submitFeedback(message, false),
-                            ),
-                        ],
+                    boxShadow: [
+                      BoxShadow(
+                        color: (isUser ? _primaryCyan : Colors.grey).withValues(
+                          alpha: isUser ? 0.22 : 0.16,
+                        ),
+                        blurRadius: 12,
+                        offset: const Offset(0, 5),
                       ),
                     ],
-                  ],
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      _buildMessageTextContent(visibleText, isUser: isUser),
+                      if (referenceSummary != null) ...[
+                        const SizedBox(height: 10),
+                        referenceSummary,
+                      ],
+                      if (!isUser) ...[
+                        const SizedBox(height: 6),
+                        Align(
+                          alignment: AlignmentDirectional.centerEnd,
+                          child: Material(
+                            color: Colors.transparent,
+                            child: InkWell(
+                              borderRadius: BorderRadius.circular(14),
+                              onTap: () => _copyMessageText(visibleText),
+                              child: Padding(
+                                padding: const EdgeInsets.all(4),
+                                child: Icon(
+                                  Icons.content_copy_rounded,
+                                  size: 16,
+                                  color: Colors.grey.shade600,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                      if (hasFooterActions) ...[
+                        const SizedBox(height: 8),
+                        Wrap(
+                          spacing: 6,
+                          runSpacing: 6,
+                          children: [
+                            if (message.canTranslate)
+                              _buildMessageActionButton(
+                                label: _translateButtonLabel(message),
+                                icon: Icons.translate_outlined,
+                                onPressed: message.isTranslating
+                                    ? null
+                                    : () => _toggleMessageTranslation(message),
+                              ),
+                            if (message.sources.isNotEmpty)
+                              _buildMessageActionButton(
+                                label: widget.isArabic
+                                    ? 'عرض المرجع الكامل'
+                                    : 'View full reference',
+                                icon: Icons.visibility_outlined,
+                                onPressed: () => _showReferenceView(message),
+                              ),
+                          ],
+                        ),
+                      ],
+                    ],
+                  ),
                 ),
               ),
             ),
@@ -1589,6 +1734,53 @@ class _AIChatPageState extends State<AIChatPage> {
         ),
       ),
     );
+  }
+
+  Future<void> _copyMessageText(String messageText) async {
+    final text = messageText.trim();
+    if (text.isEmpty) {
+      return;
+    }
+
+    await Clipboard.setData(ClipboardData(text: text));
+    if (!mounted) {
+      return;
+    }
+
+    final messenger = ScaffoldMessenger.of(context);
+    messenger
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        const SnackBar(
+          content: Text('تم النسخ'),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+  }
+
+  Future<void> _showMessageCopyMenu(
+    LongPressStartDetails details,
+    String messageText,
+  ) async {
+    final selected = await showMenu<String>(
+      context: context,
+      position: RelativeRect.fromLTRB(
+        details.globalPosition.dx,
+        details.globalPosition.dy,
+        details.globalPosition.dx,
+        details.globalPosition.dy,
+      ),
+      items: [
+        PopupMenuItem<String>(
+          value: 'copy',
+          child: Text(widget.isArabic ? 'نسخ' : 'Copy'),
+        ),
+      ],
+    );
+
+    if (selected == 'copy') {
+      await _copyMessageText(messageText);
+    }
   }
 
   Widget _buildTypingIndicator() {

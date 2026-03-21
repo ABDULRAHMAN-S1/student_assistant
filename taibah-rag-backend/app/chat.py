@@ -195,7 +195,76 @@ def dedupe_answer_text(text: str) -> str:
     if not deduped_sentences:
         return cleaned
 
-    return " ".join(deduped_sentences).strip()
+    deduped_text = " ".join(deduped_sentences).strip()
+    repeated_clause_parts = [part.strip(" ،.") for part in re.split(r"\s+لكن\s+", deduped_text) if part.strip(" ،.")]
+    if len(repeated_clause_parts) > 1:
+        deduped_parts = dedupe_preserve_order(repeated_clause_parts)
+        deduped_text = " لكن ".join(deduped_parts).strip()
+
+    return deduped_text
+
+
+def rewrite_query(question: str) -> str:
+    cleaned = (question or "").strip()
+    if not cleaned or detect_language(cleaned) != "ar":
+        return cleaned
+
+    normalized = normalize_for_matching(cleaned)
+    rewritten_parts = [cleaned]
+    seen = {normalize_for_matching(cleaned)}
+
+    def add_rewrite(text: str) -> None:
+        normalized_text = normalize_for_matching(text)
+        if normalized_text and normalized_text not in seen:
+            seen.add(normalized_text)
+            rewritten_parts.append(text)
+
+    if any(term in normalized for term in ("انسحب", "انسحاب", "سحب", "حذف", "احذف", "اسحب")):
+        add_rewrite("انسحاب من مقرر")
+
+    if any(phrase in normalized for phrase in ("وش يصير", "ايش يصير", "شو يصير", "وش الحكم", "وش النتيجه")):
+        add_rewrite("ما النتائج")
+        add_rewrite("ما الحكم")
+
+    if any(phrase in normalized for phrase in ("بدون اذن", "دون اذن", "بلا اذن")):
+        add_rewrite("دون موافقة")
+        add_rewrite("قبل أخذ موافقة")
+
+    if (
+        any(term in normalized for term in ("غبت", "غاب", "فاتني", "يغيب", "غياب"))
+        and any(term in normalized for term in ("نهائي", "النهايي", "النهائي"))
+    ):
+        add_rewrite("الغياب عن الاختبار النهائي")
+
+    if "تصوير" in normalized and any(term in normalized for term in ("محاضره", "محاضرات", "المحاضره", "المحاضرات")):
+        add_rewrite("تصوير المحاضرات")
+    if any(term in normalized for term in ("اصور", "أصور", "تصوير")) and any(
+        phrase in normalized for phrase in ("بدون اذن", "دون اذن", "بلا اذن", "بدون موافقه", "دون موافقه")
+    ):
+        add_rewrite("تصوير المحاضرات")
+        add_rewrite("التصوير دون موافقة")
+        add_rewrite("قبل أخذ موافقة")
+    if "تصوير" in normalized and any(phrase in normalized for phrase in ("بدون اذن", "دون اذن", "بلا اذن", "دون موافقه", "بدون موافقه")):
+        add_rewrite("تصوير المحاضرات دون موافقة")
+
+    if any(term in normalized for term in ("بعذر", "بعذر؟", "بعذر.", "عذر", "عذره")):
+        add_rewrite("إذا قُبل العذر")
+        if any(term in normalized for term in ("غبت", "غاب", "فاتني", "نهائي", "النهائي", "النهايي")):
+            add_rewrite("اختبار بديل")
+
+    if "حرمان" in normalized and "اختبار" in normalized and any(term in normalized for term in ("نهائي", "النهايي", "النهائي")):
+        add_rewrite("الحرمان من الاختبار النهائي")
+
+    if ("حرمان" in normalized and "كم" in normalized) or (
+        "حرمان" in normalized and any(term in normalized for term in ("علاقه", "علاقة")) and "اختبار" in normalized
+    ):
+        add_rewrite("ما نسبة الحضور المطلوبة")
+        add_rewrite("العلاقة بين الحرمان والاختبار النهائي")
+        add_rewrite("نسبة الحضور")
+        add_rewrite("الحرمان من الاختبار النهائي")
+        add_rewrite("دخول الاختبار النهائي")
+
+    return " ".join(part for part in rewritten_parts if part).strip()
 
 
 def is_yes_no_question(question: str, language: str) -> bool:
@@ -241,6 +310,73 @@ def source_type_label(doc_type: str, language: str) -> str:
 
 def source_reference_tag(doc_type: str, language: str) -> str:
     return f"[{source_type_label(doc_type, language)}]"
+
+
+def context_qa_flags(context: dict[str, Any]) -> set[str]:
+    return {
+        flag
+        for flag in context.get("metadata", {}).get("qa_flags", [])
+        if isinstance(flag, str)
+    }
+
+
+def context_is_partial(context: dict[str, Any]) -> bool:
+    metadata = context.get("metadata", {})
+    return metadata.get("status") == "partial" or "partial_chunk" in context_qa_flags(context)
+
+
+def context_is_low_signal(context: dict[str, Any]) -> bool:
+    return bool({"low_signal_chunk", "heading_only_chunk", "tiny_chunk"} & context_qa_flags(context))
+
+
+def contexts_have_quality_risk(contexts: list[dict[str, Any]]) -> bool:
+    return any(context_is_partial(context) or context_is_low_signal(context) for context in contexts)
+
+
+def context_word_count(context: dict[str, Any]) -> int:
+    return len([token for token in context.get("content", "").split() if token.strip()])
+
+
+def context_is_weak(context: dict[str, Any]) -> bool:
+    return context_is_partial(context) or context_is_low_signal(context) or context_word_count(context) < 12
+
+
+def filter_weak_contexts(contexts: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    strong_contexts = [context for context in contexts if not context_is_weak(context)]
+    return strong_contexts if strong_contexts else contexts
+
+
+def uncertainty_note(language: str) -> str:
+    return UNCLEAR_AR if language == "ar" else UNCLEAR_EN
+
+
+def append_uncertainty_note(text: str, language: str) -> str:
+    cleaned = (text or "").strip()
+    note = uncertainty_note(language)
+    if not cleaned:
+        return note
+    if note in cleaned:
+        return cleaned
+    return f"{cleaned} {note}".strip()
+
+
+def should_prefer_extractive_answer(
+    question: str,
+    contexts: list[dict[str, Any]],
+    *,
+    unclear: bool,
+) -> bool:
+    if is_status_code_query(question):
+        return False
+    if is_attendance_limit_question(question):
+        return False
+    if unclear or contexts_have_quality_risk(contexts):
+        return True
+    return detect_answer_mode(question, "ar") in {
+        "general",
+        "attendance_penalty",
+        "smoking",
+    }
 
 
 def source_intro_phrase(doc_type: str, language: str, *, secondary: bool = False) -> str:
@@ -1091,8 +1227,26 @@ def filter_contexts_for_generation(
     if not contexts:
         return []
 
+    contexts = filter_weak_contexts(dedupe_preserve_order_contexts(contexts))
+
     mode = detect_answer_mode(question, language) if language == "ar" else "general"
     if language == "ar":
+        if mode == "missed_final":
+            mode_contexts = rank_contexts_by_terms(
+                dedupe_preserve_order_contexts(contexts + fallback_missed_final_contexts(limit=4)),
+                include_any=("غبت", "غاب", "غايب", "يغيب", "صفر", "اختبار بديل"),
+                prefer_article=("المادة الحادية والثلاثون", "المادة الثانية والثلاثون"),
+            )[:3]
+            if mode_contexts:
+                return dedupe_preserve_order_contexts(mode_contexts)
+        if mode == "withdrawal":
+            mode_contexts = rank_contexts_by_terms(
+                dedupe_preserve_order_contexts(contexts + fallback_withdrawal_contexts(limit=4)),
+                include_any=("يجوز", "طلب الانسحاب", "الانسحاب من المقرر", "لا يسمح"),
+                prefer_article=("المادة السابعة عشرة", "البند 1", "البند 2", "البند 3"),
+            )[:4]
+            if mode_contexts:
+                return dedupe_preserve_order_contexts(mode_contexts)
         if is_attendance_related_question(question):
             attendance_pool = dedupe_preserve_order_contexts(contexts + fallback_attendance_limit_contexts(limit=4))
             question_terms = attendance_query_terms(question)
@@ -1416,7 +1570,7 @@ def filter_contexts_for_generation(
                 return dedupe_preserve_order_contexts(mode_contexts)
         if mode == "lecture_recording":
             mode_contexts = rank_contexts_by_terms(
-                contexts,
+                dedupe_preserve_order_contexts(contexts + fallback_lecture_recording_contexts(limit=2)),
                 require_all=("تصوير", "محاضر"),
                 include_any=("موافقه", "موافقة", "تسجيل"),
             )[:2]
@@ -1542,6 +1696,8 @@ def filter_contexts_for_generation(
 def select_answer_contexts(question: str, contexts: list[dict[str, Any]], language: str) -> list[dict[str, Any]]:
     if not contexts:
         return []
+
+    contexts = filter_weak_contexts(dedupe_preserve_order_contexts(contexts))
 
     if language != "ar":
         return contexts[:3]
@@ -1895,6 +2051,9 @@ def build_reference_entry(context: dict[str, Any], language: str, index: int) ->
     else:
         reference = f"{source_reference_tag(doc_type, 'en')} {translate_to_english(reference_core)}".strip()
 
+    if context_is_partial(context):
+        reference = f"{reference} (نص جزئي)" if language == "ar" else f"{reference} (partial text)"
+
     if not reference:
         return None
 
@@ -1962,12 +2121,15 @@ def build_supporting_excerpt(context: dict[str, Any], question: str, language: s
     if status_codes:
         items = extract_context_answer_items(context, question, max_items=3)
         if len(items) >= 2 or len(status_codes) > 1:
-            return "\n".join(f"- {item}" for item in items[: max(1, len(status_codes))])
+            excerpt = "\n".join(f"- {item}" for item in items[: max(1, len(status_codes))])
+            return append_uncertainty_note(excerpt, language) if context_is_partial(context) else excerpt
         if items:
-            return items[0].strip()
+            excerpt = items[0].strip()
+            return append_uncertainty_note(excerpt, language) if context_is_partial(context) else excerpt
         if language != "ar":
-            return clean_supporting_source_snippet(extract_snippet(context, question, "ar"))
-        return ""
+            excerpt = clean_supporting_source_snippet(extract_snippet(context, question, "ar"))
+            return append_uncertainty_note(excerpt, language) if context_is_partial(context) else excerpt
+        return uncertainty_note(language) if context_is_partial(context) else ""
 
     if language != "ar":
         return clean_supporting_source_snippet(extract_snippet(context, question, language))
@@ -1975,13 +2137,58 @@ def build_supporting_excerpt(context: dict[str, Any], question: str, language: s
     items = extract_context_answer_items(context, question, max_items=3)
     if list_like_question_kind(question) is not None:
         if len(items) >= 2:
-            return "\n".join(f"- {item}" for item in items)
+            excerpt = "\n".join(f"- {item}" for item in items)
+            return append_uncertainty_note(excerpt, language) if context_is_partial(context) else excerpt
         if items:
-            return " ".join(dedupe_preserve_order(items[:2])).strip()
-        return ""
+            excerpt = " ".join(dedupe_preserve_order(items[:2])).strip()
+            return append_uncertainty_note(excerpt, language) if context_is_partial(context) else excerpt
+        return uncertainty_note(language) if context_is_partial(context) else ""
     if items:
-        return " ".join(dedupe_preserve_order(items[:2])).strip()
-    return clean_supporting_source_snippet(extract_snippet(context, question, language))
+        excerpt = " ".join(dedupe_preserve_order(items[:2])).strip()
+        return append_uncertainty_note(excerpt, language) if context_is_partial(context) else excerpt
+    excerpt = clean_supporting_source_snippet(extract_snippet(context, question, language))
+    if not excerpt and context_is_partial(context):
+        return uncertainty_note(language)
+    return append_uncertainty_note(excerpt, language) if context_is_partial(context) else excerpt
+
+
+def has_substantive_supporting_excerpt(context: dict[str, Any], question: str, language: str) -> bool:
+    excerpt = build_supporting_excerpt(context, question, language).strip()
+    if not excerpt:
+        return False
+    return normalize_for_matching(excerpt) != normalize_for_matching(uncertainty_note(language))
+
+
+def select_evidence_contexts(
+    question: str,
+    contexts: list[dict[str, Any]],
+    language: str,
+    *,
+    max_items: int,
+) -> list[dict[str, Any]]:
+    selected = select_reference_contexts(question, contexts, max_items=max_items)
+    if not selected:
+        return []
+
+    selected = filter_weak_contexts(selected)
+
+    contexts_with_excerpt = [
+        context for context in selected if build_supporting_excerpt(context, question, language).strip()
+    ]
+    if not contexts_with_excerpt:
+        return selected
+
+    substantive_contexts = [
+        context for context in contexts_with_excerpt if has_substantive_supporting_excerpt(context, question, language)
+    ]
+    if substantive_contexts:
+        complete_substantive = [context for context in substantive_contexts if not context_is_partial(context)]
+        preferred = complete_substantive if complete_substantive else substantive_contexts
+        return preferred[:max_items]
+
+    complete_contexts = [context for context in contexts_with_excerpt if not context_is_partial(context)]
+    preferred = complete_contexts if complete_contexts else contexts_with_excerpt
+    return preferred[:max_items]
 
 
 def select_reference_contexts(
@@ -1997,6 +2204,27 @@ def select_reference_contexts(
     status_code_contexts = select_status_code_contexts(question, deduped_contexts, max_items=max_items)
     if status_code_contexts:
         return status_code_contexts
+
+    mode = detect_answer_mode(question, "ar")
+    if mode == "missed_final":
+        return rank_contexts_by_terms(
+            deduped_contexts,
+            include_any=("الطالب الغايب عن الاختبار النهايي", "غايب", "يغيب", "تغيبه", "صفر", "صفرا", "اختبار بديل"),
+            prefer_article=("الماده الحاديه والثلاثون", "الماده الثانيه والثلاثون"),
+        )[:max_items]
+    if mode == "withdrawal":
+        return rank_contexts_by_terms(
+            deduped_contexts,
+            include_any=("يجوز للطالب الانسحاب من مقرر دراسي", "ثلاثه انسحابات فقط", "طلب الانسحاب", "لا يسمح"),
+            prefer_article=("الماده السابعه عشره", "البند 3", "البند 4", "البند 5", "البند 6", "البند 2"),
+        )[:max_items]
+    if mode == "lecture_recording":
+        return rank_contexts_by_terms(
+            deduped_contexts,
+            require_all=("تصوير", "محاضر"),
+            include_any=("تسجيل", "موافقه", "قواعد السلوك والانضباط الطلابي"),
+            prefer_article=("الماده الخامسه",),
+        )[:max_items]
 
     preferred_source_type = explicit_source_type_preference(question)
     list_like = list_like_question_kind(question) is not None
@@ -2145,27 +2373,59 @@ def build_status_code_arabic_answer(question: str, contexts: list[dict[str, Any]
 
         if primary_meaning and description:
             if normalize_for_matching(primary_meaning) in normalize_for_matching(description):
-                line = f"{code} يعني: {description}"
+                line = f"{code}: {description}"
             else:
-                line = f"{code} يعني: {primary_meaning}. وفي الدليل ورد أنه {description}"
+                line = f"{code}: في اللائحة يعني {primary_meaning}. وفي الدليل ورد أنه {description}"
         elif primary_meaning:
-            line = f"{code} يعني: {primary_meaning}"
+            line = f"{code}: {primary_meaning}"
         else:
-            line = f"{code} يعني: {description}"
+            line = f"{code}: في الدليل ورد أنه {description}"
 
         lines.append(line.rstrip(" .،") + ".")
 
     if not lines:
         return None
     if len(lines) == 1:
-        return lines[0]
+        primary_context = primary_source_context(selected_contexts)
+        intro = source_intro_phrase(context_source_type(primary_context or contexts[0]), "ar").rstrip(" ،")
+        return f"{intro}: {lines[0]}"
     primary_context = primary_source_context(selected_contexts)
     header = source_intro_phrase(context_source_type(primary_context or contexts[0]), "ar").rstrip(" ،")
     return f"{header}:\n" + "\n".join(f"- {line}" for line in lines)
 
 
+def is_withdrawal_question(question: str) -> bool:
+    normalized_question = normalize_for_matching(question)
+    return any(
+        phrase in normalized_question
+        for phrase in (
+            "انسحاب",
+            "انسحب",
+            "هل اقدر انسحب",
+            "اقدر انسحب",
+            "هل اقدر احذف",
+            "اقدر احذف",
+            "حذف ماده",
+            "حذف مقرر",
+            "الانسحاب من ماده",
+            "الانسحاب من مقرر",
+        )
+    )
+
+
+def is_missed_final_question(question: str) -> bool:
+    normalized_question = normalize_for_matching(question)
+    return (
+        any(term in normalized_question for term in ("غاب", "غبت", "غياب", "يغيب", "فاتني"))
+        and "اختبار" in normalized_question
+        and any(term in normalized_question for term in ("نهائي", "النهايي", "النهائي"))
+    )
+
+
 def is_attendance_limit_question(question: str) -> bool:
     normalized_question = normalize_for_matching(question)
+    if is_missed_final_question(question):
+        return False
     return any(term in normalized_question for term in ("غياب", "حضور", "حرمان")) and any(
         term in normalized_question for term in ("كم", "نسب", "حد", "اعلي", "اقصي", "ادني")
     )
@@ -2187,10 +2447,19 @@ def build_attendance_limit_arabic_answer(question: str, contexts: list[dict[str,
         return None
 
     normalized_question = normalize_for_matching(question)
+    asks_relationship_to_final = "اختبار" in normalized_question and any(
+        term in normalized_question for term in ("علاقه", "علاقة", "له علاقه", "له علاقة")
+    )
     ranked_contexts = rank_contexts_by_terms(
         contexts,
         include_any=("نسبه الحضور", "على الا تقل نسبه الحضور", "على ألا تقل نسبة الحضور", "حضور", "حرمان"),
         prefer_article=("الحرمان", "المادة الخامسة عشرة", "البند 1"),
+    )
+
+    final_exam_context = pick_context(
+        contexts,
+        include_any=("دخول الاختبار النهائي", "الحرمان", "رفع الحرمان"),
+        article_terms=("الحرمان", "المادة الخامسة عشرة", "البند 1"),
     )
 
     for context in ranked_contexts[:3]:
@@ -2228,14 +2497,24 @@ def build_attendance_limit_arabic_answer(question: str, contexts: list[dict[str,
         if number is None:
             continue
 
+        relationship_note = ""
+        if asks_relationship_to_final:
+            if final_exam_context is not None:
+                relationship_note = (
+                    " ويرتبط ذلك بالاختبار النهائي لأن الحرمان يعني منع الطالب من دخول الاختبار النهائي إذا تدنت نسبة حضوره عن الحد الأدنى المطلوب."
+                )
+            else:
+                relationship_note = " ويرتبط ذلك بالاختبار النهائي من جهة أن الحرمان يكون بحرمان الطالب من دخوله عند تدني نسبة الحضور."
+
         if "غياب" in normalized_question and "حضور" in normalize_for_matching(snippet) and 0 <= number <= 100:
             inferred_absence = 100 - number
             return (
-                f"ورد في النص أن {snippet.rstrip(' .،')}، "
-                f"ويُفهم من ذلك أن نسبة الغياب المقابلة لا تتجاوز {inferred_absence}% بحسب النص المتاح هنا."
+                f"ورد في اللائحة أن {snippet.rstrip(' .،')}، "
+                f"وبناءً على هذا النص فإن نسبة الغياب المقابلة تُستنتج حسابياً بأنها لا تتجاوز {inferred_absence}%، "
+                f"ولا تظهر هنا نسبة غياب صريحة بلفظ مستقل.{relationship_note}"
             )
 
-        return f"ورد في النص أن {snippet.rstrip(' .،')}."
+        return f"ورد في اللائحة أن {snippet.rstrip(' .،')}.{relationship_note}"
 
     return "لم أجد في النص المتاح نسبة غياب صريحة، وإنما ظهر فقط اشتراط حد أدنى للحضور عندما يكون ذلك مذكوراً بوضوح."
 
@@ -2300,6 +2579,10 @@ ATTENDANCE_CONTEXT_TERMS = (
 
 def is_attendance_related_question(question: str) -> bool:
     normalized_question = normalize_for_matching(question)
+    if is_missed_final_question(question):
+        return False
+    if "تصوير" in normalized_question and "محاضر" in normalized_question:
+        return False
     return any(
         term in normalized_question
         for term in (
@@ -2494,6 +2777,121 @@ def fallback_attendance_limit_contexts(limit: int = 4) -> list[dict[str, Any]]:
     return [context for _, context in candidates[:limit]]
 
 
+def fallback_withdrawal_contexts(limit: int = 4) -> list[dict[str, Any]]:
+    candidates: list[tuple[float, dict[str, Any]]] = []
+    for record in get_chunk_records():
+        haystack = " ".join((record.get("normalized_metadata", ""), record.get("normalized_content", ""))).strip()
+        if "انسحاب" not in haystack:
+            continue
+        if "لايحه الدراسه والاختبارات" not in haystack:
+            continue
+
+        score = 1.0
+        if "الماده السابعه عشره" in haystack:
+            score += 2.4
+        if "يجوز للطالب الانسحاب من مقرر دراسي" in haystack:
+            score += 2.0
+        if "طلب الانسحاب" in haystack:
+            score += 1.2
+        if "لا يسمح" in haystack:
+            score += 0.8
+
+        candidates.append(
+            (
+                score,
+                {
+                    "id": record["id"],
+                    "content": record["content"],
+                    "metadata": record["metadata"],
+                    "score": score,
+                },
+            )
+        )
+
+    candidates.sort(key=lambda item: item[0], reverse=True)
+    return [context for _, context in candidates[:limit]]
+
+
+def fallback_missed_final_contexts(limit: int = 4) -> list[dict[str, Any]]:
+    candidates: list[tuple[float, dict[str, Any]]] = []
+    for record in get_chunk_records():
+        haystack = " ".join((record.get("normalized_metadata", ""), record.get("normalized_content", ""))).strip()
+        if "لايحه الدراسه والاختبارات" not in haystack:
+            continue
+        if not any(
+            term in haystack
+            for term in (
+                "الاختبار النهايي",
+                "الطالب الغايب عن الاختبار النهايي",
+                "اداء الاختبار النهايي لعذر",
+                "اختبار بديل",
+                "الماده الحاديه والثلاثون",
+                "الماده الثانيه والثلاثون",
+            )
+        ):
+            continue
+
+        score = 1.0
+        if "الماده الحاديه والثلاثون" in haystack:
+            score += 2.8
+        if "الماده الثانيه والثلاثون" in haystack:
+            score += 2.4
+        if "الطالب الغايب عن الاختبار النهايي" in haystack:
+            score += 2.0
+        if "اداء الاختبار النهايي لعذر" in haystack:
+            score += 1.6
+        if "صفرا" in haystack or "صفر" in haystack:
+            score += 1.8
+        if "اختبار بديل" in haystack:
+            score += 1.4
+
+        candidates.append(
+            (
+                score,
+                {
+                    "id": record["id"],
+                    "content": record["content"],
+                    "metadata": record["metadata"],
+                    "score": score,
+                },
+            )
+        )
+
+    candidates.sort(key=lambda item: item[0], reverse=True)
+    return [context for _, context in candidates[:limit]]
+
+
+def fallback_lecture_recording_contexts(limit: int = 2) -> list[dict[str, Any]]:
+    candidates: list[tuple[float, dict[str, Any]]] = []
+    for record in get_chunk_records():
+        haystack = " ".join((record.get("normalized_metadata", ""), record.get("normalized_content", ""))).strip()
+        if not all(term in haystack for term in ("تصوير", "محاضر")):
+            continue
+        if "موافقه" not in haystack and "تسجيل" not in haystack:
+            continue
+
+        score = 1.0
+        if "المخالفات الطلابيه" in haystack:
+            score += 1.2
+        if "قبل اخذ موافقه المحاضر الخطيه" in haystack:
+            score += 2.0
+
+        candidates.append(
+            (
+                score,
+                {
+                    "id": record["id"],
+                    "content": record["content"],
+                    "metadata": record["metadata"],
+                    "score": score,
+                },
+            )
+        )
+
+    candidates.sort(key=lambda item: item[0], reverse=True)
+    return [context for _, context in candidates[:limit]]
+
+
 def fallback_cheating_penalty_contexts(limit: int = 4) -> list[dict[str, Any]]:
     candidates: list[tuple[float, dict[str, Any]]] = []
     for record in get_chunk_records():
@@ -2596,7 +2994,10 @@ def detect_answer_mode(question: str, language: str) -> str:
         return "admission_conditions"
     if "تصوير" in normalized_question and "محاضر" in normalized_question:
         return "lecture_recording"
-    if "withdraw" in lower_question or "انسحاب" in normalized_question:
+    if "miss" in lower_question or is_missed_final_question(question):
+        if "exam" in lower_question or "اختبار" in normalized_question:
+            return "missed_final"
+    if "withdraw" in lower_question or is_withdrawal_question(question):
         return "withdrawal"
     if "smok" in lower_question or "تدخين" in normalized_question:
         return "smoking"
@@ -2606,9 +3007,6 @@ def detect_answer_mode(question: str, language: str) -> str:
         "غش" in normalized_question and "عقوب" in normalized_question
     ):
         return "penalty"
-    if "miss" in lower_question or "غبت" in normalized_question or "غاب" in normalized_question:
-        if "exam" in lower_question or "اختبار" in normalized_question:
-            return "missed_final"
     return "general"
 
 
@@ -2770,6 +3168,11 @@ def apply_source_aware_arabic_wording(
             "وفق السياسة",
             "وفق الدليل",
             "وفق الأسئلة الشائعة",
+            "ورد في اللائحة",
+            "ورد في السياسة",
+            "ورد في الدليل",
+            "ورد في الأسئلة الشائعة",
+            "بحسب ",
             "وفي الدليل ورد",
             "وفي الأسئلة الشائعة ورد",
             "كما ورد في اللائحة",
@@ -2801,33 +3204,54 @@ def format_yes_no_arabic_answer(question: str, answer: str, contexts: list[dict[
 
     normalized_question = normalize_for_matching(question)
     normalized_answer = normalize_for_matching(cleaned)
+    primary_context = primary_source_context(contexts)
+    primary_is_regulation = context_source_type(primary_context) == "regulation" if primary_context else False
+
+    def regulation_source_statement(body: str) -> str:
+        statement = strip_leading_connector(limit_answer_sentences(dedupe_answer_text(body), max_sentences=2)).rstrip(" .،")
+        if not statement:
+            return cleaned
+        article = (primary_context or {}).get("metadata", {}).get("article", "") if primary_context else ""
+        if article:
+            return f"بحسب {article}، {statement}."
+        return f"ورد في اللائحة أن {statement}."
 
     if "انسحاب" in normalized_question and asks_lower_limit(normalized_question):
-        return "لا، لا يسمح بالانسحاب إذا أصبح العبء أقل من الحد الأدنى بعد تنفيذ الانسحاب."
+        return "بحسب النص، لا يسمح بالانسحاب إذا أصبح العبء أقل من الحد الأدنى بعد تنفيذ الانسحاب."
 
     if cleaned.startswith("نعم،") or cleaned.startswith("لا،"):
+        if primary_is_regulation:
+            remainder = cleaned.split("،", 1)[1].strip() if "،" in cleaned else cleaned[3:].strip()
+            return regulation_source_statement(remainder)
         return limit_answer_sentences(cleaned, max_sentences=2)
 
     if "مجلس الجامعه" in normalized_question and any(
         "مجلس الجامعه" in context_search_text(context) and "محدد" in context_search_text(context)
         for context in contexts
     ):
-        return "نعم، يظهر في النص أن العبء الدراسي محدد من مجلس الجامعة."
+        return "ورد في النص أن العبء الدراسي محدد من مجلس الجامعة."
 
     if cleaned.startswith("لم أجد في النص المتاح رقم") or cleaned.startswith("لم أجد في النص المتاح عدد"):
-        return f"لا، {cleaned}"
+        return f"ورد في النص الآتي: {cleaned}"
 
     if any(token in normalized_answer for token in ("لا يسمح", "لا يجوز", "ممنوع", "محظور")):
         body = strip_leading_connector(limit_answer_sentences(cleaned, max_sentences=1))
+        if primary_is_regulation:
+            return regulation_source_statement(body)
         if body.startswith("لا"):
             return f"لا، {body}"
         return f"لا، {body.rstrip(' .')}."
 
     if cleaned.startswith("نعم") or cleaned.startswith("لا"):
+        if primary_is_regulation:
+            body = cleaned.split("،", 1)[1].strip() if "،" in cleaned else cleaned[3:].strip()
+            return regulation_source_statement(body)
         return limit_answer_sentences(cleaned, max_sentences=2)
 
     if any(token in normalized_answer for token in ("يجوز", "يسمح", "يحق", "محدد من مجلس الجامعه")):
         body = strip_leading_connector(limit_answer_sentences(cleaned, max_sentences=1))
+        if primary_is_regulation:
+            return regulation_source_statement(body)
         return f"نعم، {body.rstrip(' .')}."
 
     return limit_answer_sentences(cleaned, max_sentences=2)
@@ -2972,6 +3396,8 @@ def build_mode_based_arabic_answer(
 ) -> tuple[str, list[dict[str, Any]], bool] | None:
     mode = detect_answer_mode(question, "ar")
     if mode == "general":
+        return None
+    if mode in {"housing_conditions", "attendance_penalty", "smoking"}:
         return None
 
     used_contexts: list[dict[str, Any]] = []
@@ -3273,13 +3699,23 @@ def build_mode_based_arabic_answer(
                 parts.append(f"لا، {recording_text}")
 
     elif mode == "withdrawal":
+        withdrawal_pool = dedupe_preserve_order_contexts(contexts + fallback_withdrawal_contexts(limit=4))
         general_ranked = rank_contexts_by_terms(
-            contexts,
+            withdrawal_pool,
             include_any=("يجوز", "طلب الانسحاب", "الانسحاب من المقرر"),
             prefer_article=("الماده السابعه عشره", "المادة السابعة عشرة"),
         )
         general_context = general_ranked[0] if general_ranked else None
-        restrictions = rank_contexts_by_terms(contexts, require_all=("لا يسمح", "انسحاب"))
+        limit_context = pick_context(
+            withdrawal_pool,
+            article_terms=("البند 3",),
+            include_any=("ثلاثه انسحابات فقط",),
+        )
+        restrictions = rank_contexts_by_terms(
+            withdrawal_pool,
+            require_all=("لا يسمح", "انسحاب"),
+            prefer_article=("البند 4", "البند 5", "البند 6", "البند 2"),
+        )
 
         general_text = (
             extract_matching_lines(
@@ -3290,24 +3726,44 @@ def build_mode_based_arabic_answer(
             if general_context
             else ""
         )
+        limit_text = (
+            extract_matching_lines(
+                limit_context,
+                include_any=("ثلاثه انسحابات فقط",),
+                limit=1,
+            )
+            if limit_context
+            else ""
+        )
         restriction_texts: list[str] = []
-        for context in restrictions[:2]:
+        for context in restrictions[:4]:
             text = extract_matching_lines(context, require_all=("لا يسمح", "انسحاب"), limit=1)
             if text:
                 restriction_texts.append(text)
 
-        if general_text:
+        if general_text or general_context is not None:
             used_contexts.append(general_context)
-            parts.append("نعم، يجوز الانسحاب من المقرر وفق الضوابط التنفيذية.")
+            parts.append("نعم، يجوز الانسحاب من المقرر وفق المادة السابعة عشرة والقواعد التنفيذية.")
+        if limit_text and limit_context is not None:
+            used_contexts.append(limit_context)
+            parts.append(
+                "ومن أهم الضوابط أن الطالب يسمح له بثلاثة انسحابات فقط من المقررات خلال كامل مدة الدراسة بنفس الرقم الجامعي، "
+                "ويجوز لمجلس الكلية أو من يفوضه الاستثناء من ذلك."
+            )
         if restriction_texts:
-            used_contexts.extend(restrictions[:2])
+            used_contexts.extend(restrictions[:4])
             restriction_summary = []
-            if any("الفصل الصيفي" in text for text in restriction_texts):
-                restriction_summary.append("لا يسمح بالانسحاب في الفصل الصيفي")
-            if any("حرمان" in text for text in restriction_texts):
+            normalized_restrictions = [normalize_for_matching(text) for text in restriction_texts]
+            if any("المستويات الدراسيه الاقل" in text or "المستوى الدراسي الحالي" in text for text in normalized_restrictions):
+                restriction_summary.append("لا يسمح بالانسحاب من المقررات التي في مستويات أدنى من المستوى الدراسي الحالي إلا باستثناء")
+            if any("اقل من الحد الادني" in text or "الحد الادني للعبء الدراسي" in text for text in normalized_restrictions):
+                restriction_summary.append("ولا إذا أصبح العبء أقل من الحد الأدنى بعد تنفيذ الانسحاب")
+            if any("حرمان" in text for text in normalized_restrictions):
                 restriction_summary.append("ولا بعد الحرمان من المقرر")
+            if any("الفصل الصيفي" in text for text in normalized_restrictions):
+                restriction_summary.append("ولا في الفصل الصيفي")
             if restriction_summary:
-                parts.append("لكن " + " ".join(restriction_summary) + ".")
+                parts.append("لكن من القيود المهمة: " + "، ".join(dedupe_preserve_order(restriction_summary)) + ".")
             else:
                 parts.append(f"لكن {' '.join(dedupe_preserve_order(restriction_texts))}")
 
@@ -3441,7 +3897,7 @@ def build_mode_based_arabic_answer(
     if not parts or not used_contexts:
         return None
 
-    unclear = False
+    unclear = contexts_have_quality_risk(used_contexts)
     return " ".join(dedupe_preserve_order(parts)), dedupe_preserve_order_contexts(used_contexts), unclear
 
 
@@ -3461,8 +3917,17 @@ def build_direct_arabic_answer(question: str, snippets: list[str], unclear: bool
         return FALLBACK_AR
 
     yes_no = is_yes_no_question(question, "ar")
-    positive = next((snippet for snippet in snippets if any(token in snippet for token in POSITIVE_AR)), "")
     negative_snippets = [snippet for snippet in snippets if any(token in snippet for token in NEGATIVE_AR)]
+    negative_norms = {normalize_for_matching(snippet) for snippet in negative_snippets}
+    positive = next(
+        (
+            snippet
+            for snippet in snippets
+            if any(token in snippet for token in POSITIVE_AR)
+            and normalize_for_matching(snippet) not in negative_norms
+        ),
+        "",
+    )
 
     if yes_no and positive and negative_snippets:
         negative_text = " ".join(dedupe_preserve_order(negative_snippets[:2]))
@@ -3526,9 +3991,9 @@ def compose_arabic_response(
     if not snippets:
         return FALLBACK_AR, [], False
 
-    unclear = any("[غير واضح في المصدر]" in snippet for snippet in snippets) or all(
-        context.get("metadata", {}).get("status") == "partial" for context in selected_contexts
-    )
+    unclear = contexts_have_quality_risk(selected_contexts) or any(
+        "[غير واضح في المصدر]" in snippet for snippet in snippets
+    ) or all(context_is_partial(context) for context in selected_contexts)
     direct_answer = build_direct_arabic_answer(question, snippets, unclear)
     used_contexts = selected_contexts[:]
     if secondary_context is not None:
@@ -3544,6 +4009,14 @@ def build_arabic_answer(question: str, contexts: list[dict[str, Any]]) -> str:
     if unclear and UNCLEAR_AR not in direct_answer:
         direct_answer = f"{direct_answer} {UNCLEAR_AR}"
     answer_contexts = used_contexts if used_contexts else contexts
+    if should_prefer_extractive_answer(question, answer_contexts, unclear=unclear):
+        direct_answer = format_arabic_direct_answer(question, direct_answer, answer_contexts)
+        reference_contexts = select_evidence_contexts(question, answer_contexts, "ar", max_items=3)
+        reference = build_reference(reference_contexts, "ar")
+        if reference:
+            return ARABIC_OUTPUT_TEMPLATE.format(direct_answer=direct_answer, reference=reference).strip()
+        return direct_answer
+
     structuring_contexts = (
         contexts
         if list_like_question_kind(question) is not None or is_attendance_limit_question(question)
@@ -3566,14 +4039,15 @@ def build_arabic_answer(question: str, contexts: list[dict[str, Any]]) -> str:
             direct_answer = polish_multiline_arabic_answer_text(direct_answer)
         else:
             direct_answer = polish_arabic_answer_text(direct_answer)
-        direct_answer = apply_source_aware_arabic_wording(question, direct_answer, answer_contexts)
-        if detect_answer_mode(question, "ar") == "general" and "\n-" not in direct_answer:
+        if not contexts_have_quality_risk(answer_contexts):
+            direct_answer = apply_source_aware_arabic_wording(question, direct_answer, answer_contexts)
+        if detect_answer_mode(question, "ar") == "general" and "\n-" not in direct_answer and not unclear:
             direct_answer = append_secondary_source_clarification(question, direct_answer, answer_contexts)
         if "\n-" not in direct_answer:
             direct_answer = maybe_format_arabic_list_answer(direct_answer)
 
-    reference_pool = contexts if list_like_question_kind(question) is not None else used_contexts
-    reference_contexts = select_reference_contexts(question, reference_pool, max_items=3)
+    reference_pool = answer_contexts if list_like_question_kind(question) is None else contexts
+    reference_contexts = select_evidence_contexts(question, reference_pool, "ar", max_items=3)
     reference = build_reference(reference_contexts, "ar")
     if reference:
         return ARABIC_OUTPUT_TEMPLATE.format(direct_answer=direct_answer, reference=reference).strip()
@@ -3581,45 +4055,55 @@ def build_arabic_answer(question: str, contexts: list[dict[str, Any]]) -> str:
 
 
 def answer_question(question: str, top_k: int = 4) -> dict[str, Any]:
-    language = detect_language(question)
-    if is_status_code_query(question):
+    original_question = question
+    language = detect_language(original_question)
+    working_question = rewrite_query(original_question) if language == "ar" else original_question
+
+    if is_status_code_query(original_question) or is_status_code_query(working_question):
         language = "ar"
-    mode = detect_answer_mode(question, language) if language == "ar" else "general"
+    mode = detect_answer_mode(working_question, language) if language == "ar" else "general"
     retrieval_top_k = (
         max(top_k, 12)
         if mode in {"load_limit", "penalty", "attendance_penalty", "gpa_formula"}
         else max(top_k, 8)
     )
-    contexts = search(question, top_k=retrieval_top_k)
+    contexts = search(working_question, top_k=retrieval_top_k)
+    if language == "ar":
+        if mode == "withdrawal":
+            contexts = dedupe_preserve_order_contexts(contexts + fallback_withdrawal_contexts(limit=4))
+        elif mode == "missed_final":
+            contexts = dedupe_preserve_order_contexts(contexts + fallback_missed_final_contexts(limit=4))
+        elif mode == "lecture_recording":
+            contexts = dedupe_preserve_order_contexts(contexts + fallback_lecture_recording_contexts(limit=2))
     if mode == "load_limit" and language == "ar":
-        contexts = dedupe_preserve_order_contexts(contexts + fallback_load_limit_contexts(question, limit=4))
-    filtered_contexts = filter_contexts_for_generation(question, contexts, language)
+        contexts = dedupe_preserve_order_contexts(contexts + fallback_load_limit_contexts(working_question, limit=4))
+    filtered_contexts = filter_contexts_for_generation(working_question, contexts, language)
 
     if not filtered_contexts:
         answer = FALLBACK_AR if language == "ar" else FALLBACK_EN
         return {
-            "question": question,
+            "question": original_question,
             "language": language,
             "answer": answer,
             "sources": [],
         }
 
-    direct_arabic_answer, used_contexts, unclear = compose_arabic_response(question, filtered_contexts)
+    direct_arabic_answer, used_contexts, unclear = compose_arabic_response(working_question, filtered_contexts)
     if direct_arabic_answer == FALLBACK_AR:
         answer = direct_arabic_answer if language == "ar" else FALLBACK_EN
     elif language == "ar":
-        answer = build_arabic_answer(question, filtered_contexts)
+        answer = build_arabic_answer(working_question, filtered_contexts)
     else:
         if unclear and UNCLEAR_AR not in direct_arabic_answer:
             direct_arabic_answer = f"{direct_arabic_answer} {UNCLEAR_AR}"
         direct_arabic_answer = polish_arabic_answer_text(direct_arabic_answer)
-        reference_pool = filtered_contexts if list_like_question_kind(question) is not None else used_contexts
-        reference_contexts = select_reference_contexts(question, reference_pool, max_items=3)
+        reference_pool = filtered_contexts if list_like_question_kind(working_question) is not None else (used_contexts or filtered_contexts)
+        reference_contexts = select_evidence_contexts(working_question, reference_pool, language, max_items=3)
         reference = build_reference(reference_contexts, "en")
         answer = build_english_answer(direct_arabic_answer, reference)
 
-    source_pool = filtered_contexts if list_like_question_kind(question) is not None else (used_contexts if used_contexts else filtered_contexts[:top_k])
-    source_contexts = select_reference_contexts(question, source_pool, max_items=top_k)
+    source_pool = filtered_contexts if list_like_question_kind(working_question) is not None else (used_contexts if used_contexts else filtered_contexts[:top_k])
+    source_contexts = select_evidence_contexts(working_question, source_pool, language, max_items=top_k)
     sources = [
         {
             "id": item["id"],
@@ -3630,14 +4114,15 @@ def answer_question(question: str, top_k: int = 4) -> dict[str, Any]:
             "article": item["metadata"].get("article"),
             "title": item["metadata"].get("title"),
             "score": item["score"],
-            "content": build_supporting_excerpt(item, question, language),
-            "content_preview": truncate_text(build_supporting_excerpt(item, question, language), 260),
+            "content": build_supporting_excerpt(item, working_question, language),
+            "content_preview": truncate_text(build_supporting_excerpt(item, working_question, language), 260),
         }
         for item in source_contexts
+        if build_supporting_excerpt(item, working_question, language).strip()
     ]
 
     return {
-        "question": question,
+        "question": original_question,
         "language": language,
         "answer": answer,
         "sources": sources,

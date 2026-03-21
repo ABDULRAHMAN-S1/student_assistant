@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import hashlib
 import json
 import os
 import re
 import sys
+from collections import Counter
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -20,6 +22,7 @@ DATA_DIR = BASE_DIR / "data"
 PROCESSED_DIR = DATA_DIR / "processed"
 VECTORDB_DIR = DATA_DIR / "vectordb"
 CHUNKS_PATH = PROCESSED_DIR / "taibah_regulations.jsonl"
+BUILD_INFO_PATH = VECTORDB_DIR / "build_info.json"
 COLLECTION_NAME = os.getenv("VECTOR_COLLECTION_NAME", "university_regulations")
 EMBEDDING_MODEL_NAME = os.getenv(
     "EMBEDDING_MODEL",
@@ -139,6 +142,12 @@ IMPORTANT_LEGAL_PHRASES = (
     "الاختبار النهائي",
     "الاختبارات النهائيه",
     "الاختبارات النهائية",
+    "الغياب عن الاختبار النهائي",
+    "غياب الاختبار النهائي",
+    "الانسحاب من مقرر",
+    "الانسحاب من المقرر",
+    "حذف ماده",
+    "حذف مقرر",
     "السكن الطلابي",
     "السكن الجامعي",
     "شروط القبول بالاسكان الطلابي",
@@ -210,6 +219,79 @@ ATTENDANCE_SIGNAL_TERMS = (
     "اختبار",
     "اختبارات",
 )
+MIN_TOP_RESULT_WORDS = 12
+REASONABLE_REGULATION_SCORE = 0.42
+
+
+def extract_reference_number(text: str) -> int | None:
+    match = re.search(r"\d+", str(text or ""))
+    if not match:
+        return None
+    try:
+        return int(match.group(0))
+    except ValueError:
+        return None
+
+def housing_priority_bonus(record: dict[str, Any]) -> float:
+    metadata = record["metadata"]
+    normalized_metadata = record["normalized_metadata"]
+    section = normalize_for_matching(metadata.get("section", ""))
+    article_number = extract_reference_number(metadata.get("article", ""))
+    bonus = 0.0
+
+    if "شروط القبول بالاسكان الطلابي" in normalized_metadata:
+        bonus += 0.28
+    if "المستندات المطلوبه للقبول بالاسكان الطلابي" in normalized_metadata:
+        bonus -= 0.22
+    if article_number is not None:
+        if 1 <= article_number <= 4:
+            bonus += 0.32 - (0.05 * (article_number - 1))
+            if article_number == 2 and "اولا" in section and "شروط القبول بالاسكان الطلابي" in section:
+                bonus += 0.08
+        elif article_number >= 7:
+            bonus -= min(0.14, 0.03 * (article_number - 6))
+    if "اولا" in section and "شروط القبول بالاسكان الطلابي" in section:
+        bonus += 0.1
+    return bonus
+
+
+def final_result_sort_key(item: dict[str, Any], *, prefer_housing: bool) -> tuple[Any, ...]:
+    metadata = item.get("metadata", {})
+    section = normalize_for_matching(metadata.get("section", ""))
+    article = str(metadata.get("article", "") or "")
+    article_number = extract_reference_number(article)
+    housing_section_rank = 0
+    if prefer_housing:
+        if "اولا" in section and "شروط القبول بالاسكان الطلابي" in section:
+            housing_section_rank = 0
+        elif "المستندات المطلوبه للقبول بالاسكان الطلابي" in section:
+            housing_section_rank = 2
+        else:
+            housing_section_rank = 1
+    return (
+        -float(item.get("score", 0.0)),
+        -int(item.get("_source_priority", source_priority(metadata.get("doc_type", "regulation")))),
+        housing_section_rank,
+        article_number if article_number is not None else 10**6,
+        section,
+        article,
+    )
+
+
+_chunk_bundle_cache: dict[str, Any] = {
+    "token": None,
+    "records": None,
+    "record_map": None,
+    "processed_state": None,
+}
+_collection_cache: dict[str, Any] = {
+    "token": None,
+    "collection": None,
+}
+_build_info_cache: dict[str, Any] = {
+    "token": None,
+    "build_info": None,
+}
 
 
 def attendance_query_stems(query_profile: dict[str, Any]) -> list[str]:
@@ -354,7 +436,23 @@ def normalize_text(text: str, *, for_matching: bool = False) -> str:
 
 
 def normalize_query(query: str) -> str:
-    return normalize_text(query, for_matching=False)
+    normalized = normalize_text(query, for_matching=False)
+    expanded_parts = [normalized]
+
+    if any(term in normalized for term in ("انسحب", "انسحاب", "احذف", "حذف", "اسحب ماده", "احذف ماده", "حذف ماده")):
+        expanded_parts.append("انسحاب من مقرر الانسحاب من المقرر حذف مادة حذف مقرر")
+
+    if (
+        any(term in normalized for term in ("غياب", "غبت", "غاب", "يغيب", "فاتني", "فاتني الاختبار"))
+        and "اختبار" in normalized
+        and any(term in normalized for term in ("نهائي", "النهايي", "النهائي"))
+    ):
+        expanded_parts.append("الغياب عن الاختبار النهائي صفر اختبار بديل")
+
+    if any(term in normalized for term in ("تصوير المحاضرات", "تسجيل المحاضرات", "تصوير محاضره", "تصوير المحاضره")):
+        expanded_parts.append("تصوير المحاضرات تسجيل المحاضرات قبل اخذ موافقه المحاضر الخطيه قواعد السلوك والانضباط الطلابي")
+
+    return " ".join(part for part in expanded_parts if part).strip()
 
 
 def normalize_for_matching(text: str) -> str:
@@ -461,6 +559,65 @@ def build_display_title(
     return ""
 
 
+def file_state_token(path: Path) -> tuple[bool, int, int]:
+    if not path.exists():
+        return (False, 0, 0)
+    stat = path.stat()
+    return (True, int(stat.st_size), int(stat.st_mtime_ns))
+
+
+def build_vector_metadata_snapshot(entry: dict[str, Any]) -> dict[str, Any]:
+    metadata = build_metadata(entry)
+    return {
+        "source": metadata["source"],
+        "document_title": metadata["document_title"],
+        "title": metadata["title"],
+        "section": metadata["section"],
+        "article": metadata["article"],
+        "doc_type": metadata["doc_type"],
+        "language": metadata["language"],
+        "status": metadata["status"],
+    }
+
+
+def build_chunk_sync_hash(entry: dict[str, Any]) -> str:
+    payload = {
+        "chunk_id": str(entry.get("chunk_id", "") or ""),
+        "content": str(entry.get("content", "") or ""),
+        "metadata": build_vector_metadata_snapshot(entry),
+    }
+    encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def build_processed_state_summary(entries: list[dict[str, Any]]) -> dict[str, Any]:
+    digest = hashlib.sha256()
+    for entry in entries:
+        chunk_id = str(entry.get("chunk_id", "") or "")
+        sync_hash = build_chunk_sync_hash(entry)
+        digest.update(chunk_id.encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(sync_hash.encode("ascii"))
+        digest.update(b"\n")
+    return {
+        "chunk_count": len(entries),
+        "sync_hash": digest.hexdigest(),
+    }
+
+
+def load_raw_chunk_entries() -> list[dict[str, Any]]:
+    if not CHUNKS_PATH.exists():
+        raise RuntimeError("Processed chunks not found. Run `python -m app.prepare_data` first.")
+
+    raw_entries: list[dict[str, Any]] = []
+    with CHUNKS_PATH.open("r", encoding="utf-8") as file:
+        for line in file:
+            stripped = line.strip()
+            if stripped:
+                raw_entries.append(json.loads(stripped))
+    return raw_entries
+
+
 def build_metadata(entry: dict[str, Any]) -> dict[str, Any]:
     source = str(entry.get("source_file") or entry.get("source") or "").strip()
     section = clean_display_section(entry.get("section", ""))
@@ -485,55 +642,94 @@ def build_metadata(entry: dict[str, Any]) -> dict[str, Any]:
         "doc_type": doc_type,
         "language": entry.get("language", ""),
         "status": entry.get("status", ""),
+        "qa_flags": [flag for flag in entry.get("qa_flags", []) if isinstance(flag, str)],
     }
 
 
-@lru_cache(maxsize=1)
 def get_chunk_records() -> list[dict[str, Any]]:
-    if not CHUNKS_PATH.exists():
-        raise RuntimeError("Processed chunks not found. Run `python -m app.prepare_data` first.")
+    token = file_state_token(CHUNKS_PATH)
+    cached_records = _chunk_bundle_cache.get("records")
+    if _chunk_bundle_cache.get("token") == token and cached_records is not None:
+        return cached_records
+
+    raw_entries = load_raw_chunk_entries()
+
+    normalized_content_counts = Counter(
+        normalize_for_matching(entry.get("content", ""))
+        for entry in raw_entries
+        if normalize_for_matching(entry.get("content", ""))
+    )
 
     records: list[dict[str, Any]] = []
-    with CHUNKS_PATH.open("r", encoding="utf-8") as file:
-        for line in file:
-            stripped = line.strip()
-            if not stripped:
-                continue
-
-            entry = json.loads(stripped)
-            metadata = build_metadata(entry)
-            metadata_text = " ".join(
-                value for value in (metadata["document_title"], metadata["section"], metadata["article"]) if value
-            )
-            normalized_content = normalize_for_matching(entry.get("content", ""))
-            normalized_metadata = normalize_for_matching(metadata_text)
-            records.append(
-                {
-                    "id": entry.get("chunk_id", ""),
-                    "content": entry.get("content", ""),
-                    "metadata": metadata,
-                    "normalized_content": normalized_content,
-                    "normalized_metadata": normalized_metadata,
-                    "content_stems": {light_stem(token) for token in tokenize_text(entry.get("content", ""))},
-                    "metadata_stems": {light_stem(token) for token in tokenize_text(metadata_text)},
-                }
-            )
+    for entry in raw_entries:
+        metadata = build_metadata(entry)
+        metadata_text = " ".join(
+            value for value in (metadata["document_title"], metadata["section"], metadata["article"]) if value
+        )
+        normalized_content = normalize_for_matching(entry.get("content", ""))
+        normalized_metadata = normalize_for_matching(metadata_text)
+        records.append(
+            {
+                "id": entry.get("chunk_id", ""),
+                "content": entry.get("content", ""),
+                "metadata": metadata,
+                "normalized_content": normalized_content,
+                "normalized_metadata": normalized_metadata,
+                "content_stems": {light_stem(token) for token in tokenize_text(entry.get("content", ""))},
+                "metadata_stems": {light_stem(token) for token in tokenize_text(metadata_text)},
+                "duplicate_content_count": normalized_content_counts.get(normalized_content, 0),
+            }
+        )
+    _chunk_bundle_cache["token"] = token
+    _chunk_bundle_cache["records"] = records
+    _chunk_bundle_cache["record_map"] = {record["id"]: record for record in records}
+    _chunk_bundle_cache["processed_state"] = build_processed_state_summary(raw_entries)
     return records
 
 
-@lru_cache(maxsize=1)
 def get_chunk_record_map() -> dict[str, dict[str, Any]]:
+    get_chunk_records()
+    cached_map = _chunk_bundle_cache.get("record_map")
+    if isinstance(cached_map, dict):
+        return cached_map
     return {record["id"]: record for record in get_chunk_records()}
 
 
+def get_processed_chunks_state() -> dict[str, Any]:
+    get_chunk_records()
+    processed_state = _chunk_bundle_cache.get("processed_state")
+    if isinstance(processed_state, dict):
+        return dict(processed_state)
+    return build_processed_state_summary(load_raw_chunk_entries())
+
+
+def get_vector_build_info() -> dict[str, Any]:
+    token = file_state_token(BUILD_INFO_PATH)
+    cached_build_info = _build_info_cache.get("build_info")
+    if _build_info_cache.get("token") == token and isinstance(cached_build_info, dict):
+        return dict(cached_build_info)
+
+    if not BUILD_INFO_PATH.exists():
+        raise RuntimeError("Vector build info not found. Run `python -m app.embed_store --rebuild` first.")
+
+    build_info = json.loads(BUILD_INFO_PATH.read_text(encoding="utf-8"))
+    if not isinstance(build_info, dict):
+        raise RuntimeError("Vector build info is invalid.")
+
+    _build_info_cache["token"] = token
+    _build_info_cache["build_info"] = dict(build_info)
+    return dict(build_info)
+
+
 def build_query_profile(query: str) -> dict[str, Any]:
-    normalized_query = normalize_for_matching(query)
+    expanded_query = normalize_query(query)
+    normalized_query = normalize_for_matching(expanded_query)
     tokens = []
     stems = []
     seen_tokens: set[str] = set()
     seen_stems: set[str] = set()
 
-    for token in tokenize_text(query):
+    for token in tokenize_text(expanded_query):
         if (len(token) < 2 and token not in STATUS_CODE_TOKENS) or token in ARABIC_STOPWORDS:
             continue
         if token not in seen_tokens:
@@ -603,6 +799,37 @@ def infer_query_flags(query_profile: dict[str, Any]) -> dict[str, bool]:
                 "من المحاضرة",
             )
         ),
+        "withdrawal": any(
+            term in normalized_query
+            for term in (
+                "انسحب",
+                "انسحاب",
+                "اقدر انسحب",
+                "هل اقدر انسحب",
+                "احذف",
+                "حذف",
+                "الانسحاب من مقرر",
+                "الانسحاب من ماده",
+            )
+        ),
+        "missed_final": (
+            any(term in normalized_query for term in ("غياب", "غبت", "غاب", "يغيب", "فاتني"))
+            and "اختبار" in normalized_query
+            and any(term in normalized_query for term in ("نهائي", "النهايي", "النهائي"))
+        ),
+        "lecture_recording": (
+            any(
+                term in normalized_query
+                for term in (
+                    "تصوير المحاضرات",
+                    "تصوير المحاضره",
+                    "تصوير محاضره",
+                    "تسجيل المحاضرات",
+                    "تسجيل المحاضره",
+                )
+            )
+            or ("تصوير" in normalized_query and "محاضر" in normalized_query)
+        ),
         "numeric": bool({"كم", "عدد", "رقم"} & tokens)
         or bool({"حد", "اعلي", "اعلى", "ادني", "ادنى", "ساع", "مسموح"} & stems),
     }
@@ -626,12 +853,26 @@ def infer_record_flags(record: dict[str, Any]) -> dict[str, bool]:
         "housing": any(term in text for term in ("اسكان", "سكن")),
         "dress": any(term in text for term in ("الزي", "مظهر")),
         "attendance": any(term in text for term in ATTENDANCE_SIGNAL_TERMS),
+        "withdrawal": "انسحاب" in text,
+        "missed_final": any(term in text for term in ("غايب", "يغيب", "صفر", "صفرا", "اختبار بديل", "الماده الحاديه والثلاثون", "الماده الثانيه والثلاثون", "المادة الحادية والثلاثون", "المادة الثانية والثلاثون")),
+        "lecture_recording": (
+            all(term in text for term in ("تصوير", "محاضر"))
+            and any(term in text for term in ("موافقه", "تسجيل"))
+        )
+        or "تسجيل المحاضرات" in text,
     }
 
 
 def infer_record_quality(record: dict[str, Any]) -> dict[str, bool]:
     normalized_content = record["normalized_content"]
     doc_type = normalize_doc_type(record["metadata"].get("doc_type", "regulation"))
+    qa_flags = {
+        flag
+        for flag in record["metadata"].get("qa_flags", [])
+        if isinstance(flag, str)
+    }
+    word_count = len([token for token in record["content"].split() if token.strip()])
+    has_locator = bool(record["metadata"].get("section") or record["metadata"].get("article"))
     return {
         "has_numeric": bool(DIGIT_PATTERN.search(record["content"])),
         "has_direct_rule": any(term in normalized_content for term in DIRECT_RULE_TERMS),
@@ -639,8 +880,37 @@ def infer_record_quality(record: dict[str, Any]) -> dict[str, bool]:
         "is_policy": doc_type == "policy",
         "is_guide": doc_type == "guide",
         "is_faq": doc_type == "faq",
+        "is_partial": record["metadata"].get("status") == "partial" or "partial_chunk" in qa_flags,
+        "is_low_signal": bool({"low_signal_chunk", "heading_only_chunk", "tiny_chunk"} & qa_flags)
+        or word_count < 18,
+        "is_duplicate_content": record.get("duplicate_content_count", 0) > 1,
+        "has_locator": has_locator,
         "source_priority": source_priority(doc_type),
     }
+
+
+def is_reasonably_relevant_regulation(item: dict[str, Any]) -> bool:
+    return (
+        item.get("_source_priority", 0) >= SOURCE_PRIORITY["regulation"]
+        and float(item.get("score", 0.0)) >= REASONABLE_REGULATION_SCORE
+        and (
+            float(item.get("lexical_score", 0.0)) >= 0.18
+            or float(item.get("semantic_score", 0.0)) >= 0.55
+            or float(item.get("_match_ratio", 0.0)) >= 0.34
+            or float(item.get("_phrase_ratio", 0.0)) > 0.0
+            or bool(item.get("_has_direct_rule", False))
+        )
+    )
+
+
+def should_exclude_from_top_results(item: dict[str, Any]) -> bool:
+    if item.get("_is_heading_only", False):
+        return True
+    if item.get("_is_partial", False):
+        return True
+    if item.get("_is_low_signal", False):
+        return True
+    return int(item.get("_word_count", 0)) < MIN_TOP_RESULT_WORDS
 
 
 def important_match_ratio(record: dict[str, Any], query_profile: dict[str, Any]) -> float:
@@ -718,7 +988,10 @@ def lexical_match_score(record: dict[str, Any], query_profile: dict[str, Any]) -
 
     if max_score <= 0.0:
         return 0.0
-    return min(1.0, score / max_score)
+    ratio = score / max_score
+    if ratio > 0.85:
+        ratio = 0.85 + ((ratio - 0.85) * 0.4)
+    return max(0.0, min(0.94, ratio))
 
 
 @lru_cache(maxsize=1)
@@ -748,17 +1021,25 @@ def get_chroma_client() -> chromadb.PersistentClient:
     )
 
 
-@lru_cache(maxsize=1)
 def get_collection() -> Any:
+    token = file_state_token(BUILD_INFO_PATH)
+    cached_collection = _collection_cache.get("collection")
+    if _collection_cache.get("token") == token and cached_collection is not None:
+        return cached_collection
+
     client = get_chroma_client()
     try:
-        return client.get_collection(COLLECTION_NAME)
+        collection = client.get_collection(COLLECTION_NAME)
     except Exception as exc:
         message = (
             "Vector collection not found. Run `python -m app.prepare_data` and "
             "`python -m app.embed_store --rebuild` first."
         )
         raise RuntimeError(message) from exc
+
+    _collection_cache["token"] = token
+    _collection_cache["collection"] = collection
+    return collection
 
 
 def semantic_search(query: str, top_k: int = 4) -> list[dict[str, Any]]:
@@ -838,6 +1119,44 @@ def combine_scores(semantic_score: float, lexical_score: float, *, prefer_lexica
     return max(0.0, min(1.0, combined))
 
 
+def apply_authority_rerank(ranked: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    best_regulation = max(
+        (item for item in ranked if item.get("_source_priority", 0) >= SOURCE_PRIORITY["regulation"]),
+        key=lambda item: item["score"],
+        default=None,
+    )
+    if best_regulation is None or not is_reasonably_relevant_regulation(best_regulation):
+        return ranked
+
+    adjusted: list[dict[str, Any]] = []
+    best_regulation_lexical = best_regulation.get("lexical_score", 0.0)
+    best_regulation_match_ratio = best_regulation.get("_match_ratio", 0.0)
+    for item in ranked:
+        priority = item.get("_source_priority", 0)
+        if priority >= SOURCE_PRIORITY["regulation"]:
+            adjusted.append(item)
+            continue
+
+        score = item["score"]
+        lexical_score = item.get("lexical_score", 0.0)
+        phrase_ratio = item.get("_phrase_ratio", 0.0)
+        match_ratio = item.get("_match_ratio", 0.0)
+        has_direct_rule = item.get("_has_direct_rule", False)
+        if score >= best_regulation["score"] - 0.08 and lexical_score <= best_regulation_lexical + 0.04:
+            score -= 0.1 if priority <= SOURCE_PRIORITY["guide"] else 0.06
+        if priority <= SOURCE_PRIORITY["guide"] and phrase_ratio <= 0.0 and not has_direct_rule:
+            score -= 0.05
+        if score >= best_regulation["score"] - 0.18 and match_ratio <= best_regulation_match_ratio + 0.08:
+            enforced_margin = 0.015 if priority == SOURCE_PRIORITY["policy"] else 0.03 if priority == SOURCE_PRIORITY["guide"] else 0.05
+            score = min(score, best_regulation["score"] - enforced_margin)
+
+        improved = dict(item)
+        improved["score"] = round(max(0.0, min(1.0, score)), 4)
+        adjusted.append(improved)
+
+    return adjusted
+
+
 def search(query: str, top_k: int = 4) -> list[dict[str, Any]]:
     raw_query = (query or "").strip()
     if not raw_query:
@@ -899,6 +1218,7 @@ def search(query: str, top_k: int = 4) -> list[dict[str, Any]]:
 
         lexical_score = item["lexical_score"]
         semantic_score = item["semantic_score"]
+        searchable_text = f"{record['normalized_metadata']} {record['normalized_content']}"
         score = combine_scores(
             semantic_score,
             lexical_score,
@@ -967,9 +1287,50 @@ def search(query: str, top_k: int = 4) -> list[dict[str, Any]]:
 
         if record_flags["housing"] and not query_flags["housing"] and lexical_score < 0.55:
             score -= 0.12
+        if query_flags["housing"]:
+            if record_flags["housing"]:
+                score += 0.06
+            score += housing_priority_bonus(record)
+        if query_flags["withdrawal"]:
+            if record_flags["withdrawal"]:
+                score += 0.1
+                if "الماده السابعه عشره" in searchable_text:
+                    score += 0.12
+                if "يجوز للطالب الانسحاب من مقرر دراسي" in searchable_text:
+                    score += 0.22
+                if "ثلاثه انسحابات فقط" in searchable_text:
+                    score += 0.12
+                if "لا يسمح" in searchable_text and "يجوز للطالب الانسحاب من مقرر دراسي" not in searchable_text:
+                    score -= 0.08
+            elif lexical_score < 0.48 and semantic_score < 0.72:
+                score -= 0.2
+        if query_flags["missed_final"]:
+            if record_flags["missed_final"]:
+                score += 0.18
+                if quality_flags["is_regulation"]:
+                    score += 0.05
+                if "الماده الحاديه والثلاثون" in searchable_text:
+                    score += 0.2
+                elif "الماده الثانيه والثلاثون" in searchable_text:
+                    score += 0.12
+                if "الطالب الغايب عن الاختبار النهايي" in searchable_text:
+                    score += 0.14
+            elif record_flags["attendance"]:
+                score -= 0.34
+                if lexical_score < 0.55 and semantic_score < 0.82:
+                    continue
+        if query_flags["lecture_recording"]:
+            if record_flags["lecture_recording"]:
+                score += 0.24
+                if "قبل اخذ موافقه المحاضر الخطيه" in searchable_text:
+                    score += 0.16
+                if "قواعد السلوك والانضباط الطلابي" in searchable_text:
+                    score += 0.08
+            elif lexical_score < 0.5 and semantic_score < 0.78:
+                score -= 0.28
         if record_flags["dress"] and not query_flags["dress"] and lexical_score < 0.55:
             score -= 0.16
-        if query_flags["attendance"]:
+        if query_flags["attendance"] and not query_flags["missed_final"]:
             query_attendance_stems = attendance_query_stems(query_profile)
             if attendance_matches > 0:
                 if lexical_score >= 0.16 or semantic_score >= 0.42:
@@ -984,10 +1345,39 @@ def search(query: str, top_k: int = 4) -> list[dict[str, Any]]:
                     continue
             if record_flags["attendance"] and attendance_matches <= 0 and lexical_score < 0.55:
                 score -= 0.12
-        if lexical_score >= 0.3 or semantic_score >= 0.62:
-            score += 0.008 * quality_flags["source_priority"]
-        if quality_flags["is_regulation"] and (lexical_score >= 0.3 or semantic_score >= 0.62):
-            score += 0.006
+            if quality_flags["is_guide"] and attendance_matches <= 0:
+                score -= 0.18
+            if quality_flags["is_faq"] and attendance_matches <= 0:
+                score -= 0.24
+        if lexical_score >= 0.24 or semantic_score >= 0.58:
+            if quality_flags["is_regulation"]:
+                score += 0.12
+            elif quality_flags["is_policy"]:
+                score += 0.02
+            elif quality_flags["is_guide"]:
+                score -= 0.08
+            elif quality_flags["is_faq"]:
+                score -= 0.14
+        if quality_flags["is_partial"]:
+            score -= 0.28 if lexical_score < 0.72 else 0.18
+        if quality_flags["is_low_signal"]:
+            score -= 0.22
+        if quality_flags["is_duplicate_content"]:
+            score -= 0.1
+        if not quality_flags["has_locator"] and query_profile["important_stems"]:
+            score -= 0.08
+        if quality_flags["is_guide"] and query_profile["important_stems"] and phrase_ratio <= 0.0:
+            score -= 0.12
+        if quality_flags["is_faq"] and query_profile["important_stems"]:
+            score -= 0.16
+        if quality_flags["is_policy"] and query_profile["important_stems"] and not quality_flags["has_direct_rule"]:
+            score -= 0.06
+
+        word_count = len([token for token in record["content"].split() if token.strip()])
+        if word_count < MIN_TOP_RESULT_WORDS:
+            score -= 0.22
+            if lexical_score < 0.6 and semantic_score < 0.78:
+                continue
 
         if code_style_query:
             score = code_style_rank_score(
@@ -1010,19 +1400,35 @@ def search(query: str, top_k: int = 4) -> list[dict[str, Any]]:
                 "semantic_score": round(semantic_score, 4),
                 "lexical_score": round(lexical_score, 4),
                 "metadata": record["metadata"],
+                "_source_priority": quality_flags["source_priority"],
+                "_match_ratio": round(match_ratio, 4),
+                "_phrase_ratio": round(phrase_ratio, 4),
+                "_has_direct_rule": quality_flags["has_direct_rule"],
+                "_is_partial": quality_flags["is_partial"],
+                "_is_low_signal": quality_flags["is_low_signal"],
+                "_is_heading_only": "heading_only_chunk" in record["metadata"].get("qa_flags", []),
+                "_word_count": word_count,
             }
         )
 
-    ranked.sort(
-        key=lambda item: (
-            item["score"],
-            source_priority(item["metadata"].get("doc_type", "regulation")),
-            item["metadata"].get("article", ""),
-            item["metadata"].get("section", ""),
-        ),
-        reverse=True,
-    )
-    return ranked[:top_k]
+    ranked = apply_authority_rerank(ranked)
+
+    ranked.sort(key=lambda item: final_result_sort_key(item, prefer_housing=query_flags["housing"]))
+    strong_ranked = [item for item in ranked if not should_exclude_from_top_results(item)]
+    final_ranked = strong_ranked if strong_ranked else ranked
+    cleaned_ranked = []
+    for item in final_ranked[:top_k]:
+        cleaned_item = dict(item)
+        cleaned_item.pop("_source_priority", None)
+        cleaned_item.pop("_match_ratio", None)
+        cleaned_item.pop("_phrase_ratio", None)
+        cleaned_item.pop("_has_direct_rule", None)
+        cleaned_item.pop("_is_partial", None)
+        cleaned_item.pop("_is_low_signal", None)
+        cleaned_item.pop("_is_heading_only", None)
+        cleaned_item.pop("_word_count", None)
+        cleaned_ranked.append(cleaned_item)
+    return cleaned_ranked
 
 
 def main() -> None:
