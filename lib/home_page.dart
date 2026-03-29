@@ -5,6 +5,7 @@ import 'courses_page.dart';
 import 'custom_dialog.dart';
 import 'custom_toast.dart';
 import 'events_page.dart';
+import 'features/admin/presentation/admin_panel_page.dart';
 import 'features/auth/domain/models/auth_session.dart';
 import 'features/courses/data/demo/demo_course_repository.dart';
 import 'features/courses/data/repositories/course_repository.dart';
@@ -36,6 +37,7 @@ class AppColors {
 
 class HomePage extends StatefulWidget {
   final bool isArabic;
+  final AuthSession? authSession;
   final VoidCallback? onToggleLanguage;
   final bool isGuest;
   final Future<void> Function(AuthSession session)? onLoginSuccess;
@@ -45,6 +47,7 @@ class HomePage extends StatefulWidget {
   const HomePage({
     super.key,
     required this.isArabic,
+    this.authSession,
     this.onToggleLanguage,
     this.isGuest = false,
     this.onLoginSuccess,
@@ -69,6 +72,8 @@ class _HomePageState extends State<HomePage> {
   int? _pendingProtectedPageIndex;
   bool _isHandlingSessionExpiry = false;
   late Future<List<RecommendationItem>> _recommendationsFuture;
+
+  bool get _isAdmin => widget.authSession?.isAdmin == true;
 
   @override
   void initState() {
@@ -271,6 +276,9 @@ class _HomePageState extends State<HomePage> {
         BackendStatusBanner(isArabic: _isArabic),
         const SizedBox(height: 14),
 
+        if (_isAdmin) _buildAdminAccessBanner(),
+        if (_isAdmin) const SizedBox(height: 14),
+
         TaibahWelcomeCard(isArabic: _isArabic),
         const SizedBox(height: 14),
         _buildRecommendationsSection(),
@@ -423,6 +431,96 @@ class _HomePageState extends State<HomePage> {
           const SizedBox(height: 14),
           child,
         ],
+      ),
+    );
+  }
+
+  Widget _buildAdminAccessBanner() {
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: const Color(0xFFEEF4FF),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: const Color(0xFFD7E7FF)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 42,
+                height: 42,
+                decoration: BoxDecoration(
+                  color: const Color(0xFF2563EB).withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: const Icon(
+                  Icons.admin_panel_settings_outlined,
+                  color: Color(0xFF1D4ED8),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      _isArabic ? 'وصول إداري مفعل' : 'Admin access enabled',
+                      style: const TextStyle(
+                        fontWeight: FontWeight.w800,
+                        color: Color(0xFF1D4ED8),
+                        fontSize: 14,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      _isArabic
+                          ? 'هذا الحساب يملك صلاحيات admin في النظام.'
+                          : 'This account currently has admin privileges in the system.',
+                      style: const TextStyle(
+                        color: Color(0xFF1E3A8A),
+                        fontSize: 12.5,
+                        height: 1.4,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          OutlinedButton.icon(
+            onPressed: _openAdminPanel,
+            icon: const Icon(Icons.settings_outlined),
+            label: Text(_isArabic ? 'لوحة الإدارة' : 'Admin Panel'),
+            style: OutlinedButton.styleFrom(
+              foregroundColor: const Color(0xFF1D4ED8),
+              side: const BorderSide(color: Color(0xFFBFDBFE)),
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(14),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _openAdminPanel() async {
+    final authSession = widget.authSession;
+    if (authSession == null) {
+      return;
+    }
+
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => AdminPanelPage(
+          isArabic: _isArabic,
+          authSession: authSession,
+          onSessionUpdated: widget.onLoginSuccess,
+        ),
       ),
     );
   }

@@ -40,6 +40,22 @@ class _LoginPageState extends State<LoginPage> {
         error.kind == AuthApiErrorKind.invalidResponse;
   }
 
+  bool get _isBackendOffline =>
+      BackendStatusController.instance.snapshot.isOffline;
+
+  String get _backendUnavailableMessage => widget.isArabic
+      ? 'الخادم غير متاح حالياً. شغّل الـ backend المحلي ثم حدّث الحالة من الأعلى.'
+      : 'The backend is currently unavailable. Start the local backend, then refresh the status above.';
+
+  void _showBackendUnavailableSnackBar() {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(_backendUnavailableMessage),
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
+  }
+
   @override
   void dispose() {
     _email.dispose();
@@ -80,6 +96,11 @@ class _LoginPageState extends State<LoginPage> {
           behavior: SnackBarBehavior.floating,
         ),
       );
+      return;
+    }
+
+    if (_isBackendOffline) {
+      _showBackendUnavailableSnackBar();
       return;
     }
 
@@ -304,42 +325,72 @@ class _LoginPageState extends State<LoginPage> {
 
                     const SizedBox(height: 6),
 
-                    SizedBox(
-                      width: double.infinity,
-                      height: 52,
-                      child: ElevatedButton(
-                        onPressed: _isSubmitting ? null : _handleLogin,
-                        style: ElevatedButton.styleFrom(
-                          elevation: 0,
-                          backgroundColor: Colors.transparent,
-                          shadowColor: Colors.transparent,
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(18),
-                          ),
-                        ),
-                        child: Ink(
-                          decoration: BoxDecoration(
-                            borderRadius: BorderRadius.circular(18),
-                            gradient: const LinearGradient(
-                              colors: [Color(0xFF4F46E5), Color(0xFF9333EA)],
-                            ),
-                          ),
-                          child: Container(
-                            alignment: Alignment.center,
-                            child: Text(
-                              _isSubmitting
-                                  ? (isAr
-                                        ? 'جارٍ تسجيل الدخول...'
-                                        : 'Signing in...')
-                                  : (isAr ? 'تسجيل الدخول' : 'Login'),
-                              style: const TextStyle(
-                                color: Colors.white,
-                                fontWeight: FontWeight.w900,
+                    AnimatedBuilder(
+                      animation: BackendStatusController.instance,
+                      builder: (context, _) {
+                        final isBackendOffline =
+                            BackendStatusController.instance.snapshot.isOffline;
+                        final canSubmit = !_isSubmitting && !isBackendOffline;
+                        final gradientColors = isBackendOffline
+                            ? const [Color(0xFFCBD5E1), Color(0xFF94A3B8)]
+                            : const [Color(0xFF4F46E5), Color(0xFF9333EA)];
+
+                        return Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            SizedBox(
+                              width: double.infinity,
+                              height: 52,
+                              child: ElevatedButton(
+                                onPressed: canSubmit ? _handleLogin : null,
+                                style: ElevatedButton.styleFrom(
+                                  elevation: 0,
+                                  backgroundColor: Colors.transparent,
+                                  shadowColor: Colors.transparent,
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(18),
+                                  ),
+                                ),
+                                child: Ink(
+                                  decoration: BoxDecoration(
+                                    borderRadius: BorderRadius.circular(18),
+                                    gradient: LinearGradient(
+                                      colors: gradientColors,
+                                    ),
+                                  ),
+                                  child: Container(
+                                    alignment: Alignment.center,
+                                    child: Text(
+                                      _isSubmitting
+                                          ? (isAr
+                                                ? 'جارٍ تسجيل الدخول...'
+                                                : 'Signing in...')
+                                          : (isAr ? 'تسجيل الدخول' : 'Login'),
+                                      style: const TextStyle(
+                                        color: Colors.white,
+                                        fontWeight: FontWeight.w900,
+                                      ),
+                                    ),
+                                  ),
+                                ),
                               ),
                             ),
-                          ),
-                        ),
-                      ),
+                            if (isBackendOffline) ...[
+                              const SizedBox(height: 8),
+                              Text(
+                                _backendUnavailableMessage,
+                                textAlign: TextAlign.center,
+                                style: const TextStyle(
+                                  color: Color(0xFF7F1D1D),
+                                  fontSize: 12.5,
+                                  fontWeight: FontWeight.w600,
+                                  height: 1.4,
+                                ),
+                              ),
+                            ],
+                          ],
+                        );
+                      },
                     ),
 
                     const SizedBox(height: 14),

@@ -132,6 +132,14 @@ class _CreateAccountScreenState extends State<CreateAccountScreen> {
         error.kind == AuthApiErrorKind.invalidResponse;
   }
 
+  bool get _isBackendOffline =>
+      BackendStatusController.instance.snapshot.isOffline;
+
+  String get _backendUnavailableMessage => _getText(
+    'الخادم غير متاح حالياً. شغّل الـ backend المحلي ثم حدّث الحالة من الأعلى.',
+    'The backend is currently unavailable. Start the local backend, then refresh the status above.',
+  );
+
   StudentProfile _buildStudentProfile() {
     final now = DateTime.now();
     final academicContext = AcademicContext(
@@ -168,6 +176,11 @@ class _CreateAccountScreenState extends State<CreateAccountScreen> {
           'Please agree to Terms and Conditions',
         ),
       );
+      return;
+    }
+
+    if (_isBackendOffline) {
+      _showErrorSnackBar(_backendUnavailableMessage);
       return;
     }
 
@@ -529,49 +542,81 @@ class _CreateAccountScreenState extends State<CreateAccountScreen> {
   }
 
   Widget _buildSubmitButton() {
-    return Container(
-      width: double.infinity,
-      height: 56,
-      decoration: BoxDecoration(
-        gradient: const LinearGradient(
-          colors: [_lightPurple, _primaryPurple, _darkPurple],
-        ),
-        borderRadius: BorderRadius.circular(12),
-        boxShadow: [
-          BoxShadow(
-            color: _primaryPurple.withValues(alpha: 0.3),
-            blurRadius: 8,
-            offset: const Offset(0, 4),
-          ),
-        ],
-      ),
-      child: ElevatedButton(
-        onPressed: _isSubmitting ? null : _submitForm,
-        style: ElevatedButton.styleFrom(
-          backgroundColor: Colors.transparent,
-          shadowColor: Colors.transparent,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(12),
-          ),
-        ),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.center,
+    return AnimatedBuilder(
+      animation: BackendStatusController.instance,
+      builder: (context, _) {
+        final isBackendOffline =
+            BackendStatusController.instance.snapshot.isOffline;
+        final canSubmit = !_isSubmitting && !isBackendOffline;
+        final gradientColors = isBackendOffline
+            ? const [Color(0xFFE2E8F0), Color(0xFFCBD5E1), Color(0xFF94A3B8)]
+            : const [_lightPurple, _primaryPurple, _darkPurple];
+
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            const Icon(Icons.person_add, color: Colors.white),
-            const SizedBox(width: 8),
-            Text(
-              _isSubmitting
-                  ? _getText('جارٍ إنشاء الحساب...', 'Creating account...')
-                  : _getText('إنشاء الحساب', 'Create Account'),
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 18,
-                fontWeight: FontWeight.bold,
+            Container(
+              width: double.infinity,
+              height: 56,
+              decoration: BoxDecoration(
+                gradient: LinearGradient(colors: gradientColors),
+                borderRadius: BorderRadius.circular(12),
+                boxShadow: [
+                  BoxShadow(
+                    color: (isBackendOffline ? Colors.grey : _primaryPurple)
+                        .withValues(alpha: 0.22),
+                    blurRadius: 8,
+                    offset: const Offset(0, 4),
+                  ),
+                ],
+              ),
+              child: ElevatedButton(
+                onPressed: canSubmit ? _submitForm : null,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.transparent,
+                  shadowColor: Colors.transparent,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    const Icon(Icons.person_add, color: Colors.white),
+                    const SizedBox(width: 8),
+                    Text(
+                      _isSubmitting
+                          ? _getText(
+                              'جارٍ إنشاء الحساب...',
+                              'Creating account...',
+                            )
+                          : _getText('إنشاء الحساب', 'Create Account'),
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ),
+            if (isBackendOffline) ...[
+              const SizedBox(height: 8),
+              Text(
+                _backendUnavailableMessage,
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                  color: Color(0xFF7F1D1D),
+                  fontSize: 12.5,
+                  fontWeight: FontWeight.w600,
+                  height: 1.4,
+                ),
+              ),
+            ],
           ],
-        ),
-      ),
+        );
+      },
     );
   }
 

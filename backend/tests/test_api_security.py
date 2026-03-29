@@ -64,18 +64,25 @@ class ApiSecurityTests(unittest.TestCase):
         self.client.close()
         self._temp_dir.cleanup()
 
-    def register_user(self) -> dict[str, str]:
+    def register_user(
+        self,
+        *,
+        email: str = "student@example.com",
+        full_name: str = "Student User",
+    ) -> dict[str, str]:
         response = self.client.post(
             "/auth/register",
             json={
-                "email": "student@example.com",
+                "email": email,
                 "password": "super-secure-password",
-                "full_name": "Student User",
+                "full_name": full_name,
             },
         )
         self.assertEqual(response.status_code, 200)
         payload = response.json()
         return {
+            "user_id": payload["user"]["id"],
+            "role": payload["user"]["role"],
             "access_token": payload["access_token"],
             "refresh_token": payload["refresh_token"],
         }
@@ -109,6 +116,7 @@ class ApiSecurityTests(unittest.TestCase):
         register_payload = register_response.json()
         self.assertTrue(register_payload["access_token"])
         self.assertTrue(register_payload["refresh_token"])
+        self.assertEqual(register_payload["user"]["role"], "student")
         self.assertLess(
             register_payload["access_expires_at"],
             register_payload["refresh_expires_at"],
@@ -122,6 +130,7 @@ class ApiSecurityTests(unittest.TestCase):
             },
         )
         self.assertEqual(login_response.status_code, 200)
+        self.assertEqual(login_response.json()["user"]["role"], "student")
 
         refresh_response = self.client.post(
             "/auth/refresh",
@@ -129,6 +138,113 @@ class ApiSecurityTests(unittest.TestCase):
         )
         self.assertEqual(refresh_response.status_code, 200)
         self.assertTrue(refresh_response.json()["access_token"])
+        self.assertEqual(refresh_response.json()["user"]["role"], "student")
+
+    def test_me_returns_user_role_and_admin_route_requires_admin(self) -> None:
+        tokens = self.register_user()
+
+        me_response = self.client.get(
+            "/me",
+            headers=self.auth_headers(tokens["access_token"]),
+        )
+        self.assertEqual(me_response.status_code, 200)
+        self.assertEqual(me_response.json()["user"]["role"], "student")
+
+        forbidden_response = self.client.get(
+            "/admin",
+            headers=self.auth_headers(tokens["access_token"]),
+        )
+        self.assertEqual(forbidden_response.status_code, 403)
+
+        forbidden_users_response = self.client.get(
+            "/users",
+            headers=self.auth_headers(tokens["access_token"]),
+        )
+        self.assertEqual(forbidden_users_response.status_code, 403)
+
+        forbidden_patch_response = self.client.patch(
+            f"/users/{tokens['user_id']}/role",
+            headers=self.auth_headers(tokens["access_token"]),
+            json={"role": "admin"},
+        )
+        self.assertEqual(forbidden_patch_response.status_code, 403)
+
+        connection = sqlite3.connect(self.temp_path / "app.db")
+        connection.execute(
+            "UPDATE users SET role = ? WHERE id = ?",
+            ("admin", tokens["user_id"]),
+        )
+        connection.commit()
+        connection.close()
+
+        login_response = self.client.post(
+            "/auth/login",
+            json={
+                "email": "student@example.com",
+                "password": "super-secure-password",
+            },
+        )
+        self.assertEqual(login_response.status_code, 200)
+        self.assertEqual(login_response.json()["user"]["role"], "admin")
+
+        second_user = self.register_user(
+            email="learner@example.com",
+            full_name="Learner User",
+        )
+
+        users_response = self.client.get(
+            "/users",
+            headers=self.auth_headers(login_response.json()["access_token"]),
+        )
+        self.assertEqual(users_response.status_code, 200)
+        users_payload = users_response.json()["users"]
+        self.assertEqual(len(users_payload), 2)
+        user_roles = {user["email"]: user["role"] for user in users_payload}
+        self.assertEqual(user_roles["student@example.com"], "admin")
+        self.assertEqual(user_roles["learner@example.com"], "student")
+
+        invalid_role_response = self.client.patch(
+            f"/users/{second_user['user_id']}/role",
+            headers=self.auth_headers(login_response.json()["access_token"]),
+            json={"role": "owner"},
+        )
+        self.assertEqual(invalid_role_response.status_code, 422)
+
+        patch_response = self.client.patch(
+            f"/users/{second_user['user_id']}/role",
+            headers=self.auth_headers(login_response.json()["access_token"]),
+            json={"role": "admin"},
+        )
+        self.assertEqual(patch_response.status_code, 200)
+        self.assertEqual(patch_response.json()["user"]["role"], "admin")
+
+        users_after_patch_response = self.client.get(
+            "/users",
+            headers=self.auth_headers(login_response.json()["access_token"]),
+        )
+        self.assertEqual(users_after_patch_response.status_code, 200)
+        updated_roles = {
+            user["email"]: user["role"]
+            for user in users_after_patch_response.json()["users"]
+        }
+        self.assertEqual(updated_roles["learner@example.com"], "admin")
+
+        admin_response = self.client.get(
+            "/admin",
+            headers=self.auth_headers(login_response.json()["access_token"]),
+        )
+        self.assertEqual(admin_response.status_code, 200)
+        self.assertEqual(admin_response.json()["user"]["role"], "admin")
+
+        second_login_response = self.client.post(
+            "/auth/login",
+            json={
+                "email": "learner@example.com",
+                "password": "super-secure-password",
+            },
+        )
+        self.assertEqual(second_login_response.status_code, 200)
+        self.assertEqual(second_login_response.json()["user"]["role"], "admin")
 
     def test_feedback_persists_only_hashed_content(self) -> None:
         tokens = self.register_user()

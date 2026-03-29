@@ -9,7 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 try:
-    from app.auth_service import AuthenticatedUser, authenticate_user, refresh_session, register_user, require_authenticated_user
+    from app.auth_service import AuthenticatedUser, authenticate_user, list_users, refresh_session, register_user, require_authenticated_user, require_role, update_user_role
     from app.chat import answer_question
     from app.config import get_settings
     from app.database import init_database, insert_feedback
@@ -18,10 +18,10 @@ try:
     from app.retrieve import (
         search,
     )
-    from app.schemas import ChatRequest, FeedbackRequest, LoginRequest, RefreshRequest, RegisterRequest, SearchRequest, TranslateRequest
+    from app.schemas import ChatRequest, FeedbackRequest, LoginRequest, RefreshRequest, RegisterRequest, SearchRequest, TranslateRequest, UpdateUserRoleRequest
     from app.translation_service import TranslationUnavailable, translate_text
 except ImportError:
-    from auth_service import AuthenticatedUser, authenticate_user, refresh_session, register_user, require_authenticated_user  # type: ignore
+    from auth_service import AuthenticatedUser, authenticate_user, list_users, refresh_session, register_user, require_authenticated_user, require_role, update_user_role  # type: ignore
     from chat import answer_question  # type: ignore
     from config import get_settings  # type: ignore
     from database import init_database, insert_feedback  # type: ignore
@@ -30,7 +30,7 @@ except ImportError:
     from retrieve import (  # type: ignore
         search,
     )
-    from schemas import ChatRequest, FeedbackRequest, LoginRequest, RefreshRequest, RegisterRequest, SearchRequest, TranslateRequest  # type: ignore
+    from schemas import ChatRequest, FeedbackRequest, LoginRequest, RefreshRequest, RegisterRequest, SearchRequest, TranslateRequest, UpdateUserRoleRequest  # type: ignore
     from translation_service import TranslationUnavailable, translate_text  # type: ignore
 
 
@@ -49,6 +49,7 @@ RATE_LIMIT_RULES = {
     "/feedback": (20, 60),
     "/translate": (15, 60),
     "/health": (20, 60),
+    "/users": (20, 60),
 }
 
 
@@ -65,7 +66,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=list(settings.cors_origins),
     allow_credentials=True,
-    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_methods=["GET", "POST", "PATCH", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type", "Accept", "X-Request-ID"],
 )
 
@@ -113,6 +114,15 @@ def client_identity(request: Request, user: AuthenticatedUser | None = None) -> 
     if request.client and request.client.host:
         return request.client.host
     return "unknown"
+
+
+def serialize_current_user(current_user: AuthenticatedUser) -> dict[str, str]:
+    return {
+        "id": current_user.user_id,
+        "email": current_user.email,
+        "full_name": current_user.full_name,
+        "role": current_user.role,
+    }
 
 
 def enforce_rate_limit(request: Request, *, user: AuthenticatedUser | None = None) -> None:
@@ -202,6 +212,50 @@ def auth_refresh(http_request: Request, request: RefreshRequest) -> dict[str, ob
     return refresh_session(request.refresh_token)
 
 
+@app.get("/me")
+def me(
+    http_request: Request,
+    current_user: AuthenticatedUser = Depends(require_authenticated_user),
+) -> dict[str, object]:
+    enforce_rate_limit(http_request, user=current_user)
+    return {"user": serialize_current_user(current_user)}
+
+
+@app.get("/admin")
+def admin_only(
+    http_request: Request,
+    current_user: AuthenticatedUser = Depends(require_role(["admin"])),
+) -> dict[str, object]:
+    enforce_rate_limit(http_request, user=current_user)
+    return {
+        "message": "Admin access granted.",
+        "user": serialize_current_user(current_user),
+    }
+
+
+@app.get("/users")
+def users_list(
+    http_request: Request,
+    current_user: AuthenticatedUser = Depends(require_role(["admin"])),
+) -> dict[str, object]:
+    enforce_rate_limit(http_request, user=current_user)
+    return {
+        "users": list_users(),
+    }
+
+
+@app.patch("/users/{user_id}/role")
+def patch_user_role(
+    user_id: str,
+    request: UpdateUserRoleRequest,
+    current_user: AuthenticatedUser = Depends(require_role(["admin"])),
+) -> dict[str, object]:
+    del current_user
+    return {
+        "user": update_user_role(user_id=user_id, role=request.role),
+    }
+
+
 @app.get("/health")
 def health(http_request: Request, current_user: AuthenticatedUser = Depends(require_authenticated_user)) -> dict[str, object]:
     enforce_rate_limit(http_request, user=current_user)
@@ -210,6 +264,7 @@ def health(http_request: Request, current_user: AuthenticatedUser = Depends(requ
         "ready": True,
         "version": settings.api_version,
         "user": current_user.email,
+        "role": current_user.role,
     }
 
 

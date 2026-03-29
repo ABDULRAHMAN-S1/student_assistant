@@ -565,11 +565,33 @@ class _AIChatPageState extends State<AIChatPage> {
         error.kind == AssistantApiErrorKind.invalidResponse;
   }
 
+  bool get _isBackendOffline =>
+      BackendStatusController.instance.snapshot.isOffline;
+
+  String get _backendUnavailableMessage => widget.isArabic
+      ? 'الخادم غير متاح حالياً. شغّل الـ backend المحلي ثم حدّث الحالة من الشريط العلوي.'
+      : 'The backend is currently unavailable. Start the local backend, then refresh the status from the header.';
+
+  void _showBackendUnavailableSnackBar() {
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(_backendUnavailableMessage)));
+  }
+
+  bool _ensureBackendAvailable() {
+    if (!_isBackendOffline) {
+      return true;
+    }
+    _showBackendUnavailableSnackBar();
+    return false;
+  }
+
   Future<void> _sendMessage({String? presetText}) async {
     if (_isTyping) return;
 
     final text = (presetText ?? _messageController.text).trim();
     if (text.isEmpty) return;
+    if (!_ensureBackendAvailable()) return;
 
     setState(() {
       _messages.add(
@@ -1056,6 +1078,7 @@ class _AIChatPageState extends State<AIChatPage> {
 
     final messageIndex = _resolveMessageIndex(message);
     if (messageIndex < 0) return;
+    if (!_ensureBackendAvailable()) return;
     final previousHelpful = message.helpful;
 
     setState(() {
@@ -1161,6 +1184,8 @@ class _AIChatPageState extends State<AIChatPage> {
       await _persistHistory();
       return;
     }
+
+    if (!_ensureBackendAvailable()) return;
 
     setState(() {
       _messages[messageIndex] = message.copyWith(isTranslating: true);
@@ -1518,31 +1543,40 @@ class _AIChatPageState extends State<AIChatPage> {
               ],
             ),
           ),
-          PopupMenuButton<String>(
-            icon: const Icon(Icons.more_vert, color: Colors.white),
-            onSelected: (value) {
-              if (value == 'search') {
-                _openSearchPage();
-              } else if (value == 'clear') {
-                _clearHistory();
-              }
+          AnimatedBuilder(
+            animation: BackendStatusController.instance,
+            builder: (context, _) {
+              final isBackendOffline =
+                  BackendStatusController.instance.snapshot.isOffline;
+
+              return PopupMenuButton<String>(
+                icon: const Icon(Icons.more_vert, color: Colors.white),
+                onSelected: (value) {
+                  if (value == 'search') {
+                    _openSearchPage();
+                  } else if (value == 'clear') {
+                    _clearHistory();
+                  }
+                },
+                itemBuilder: (context) => [
+                  PopupMenuItem<String>(
+                    value: 'search',
+                    enabled: !isBackendOffline,
+                    child: Text(
+                      widget.isArabic
+                          ? 'البحث في المصادر الرسمية'
+                          : 'Search official sources',
+                    ),
+                  ),
+                  PopupMenuItem<String>(
+                    value: 'clear',
+                    child: Text(
+                      widget.isArabic ? 'مسح المحادثة' : 'Clear chat history',
+                    ),
+                  ),
+                ],
+              );
             },
-            itemBuilder: (context) => [
-              PopupMenuItem<String>(
-                value: 'search',
-                child: Text(
-                  widget.isArabic
-                      ? 'البحث في المصادر الرسمية'
-                      : 'Search official sources',
-                ),
-              ),
-              PopupMenuItem<String>(
-                value: 'clear',
-                child: Text(
-                  widget.isArabic ? 'مسح المحادثة' : 'Clear chat history',
-                ),
-              ),
-            ],
           ),
         ],
       ),
@@ -1651,20 +1685,30 @@ class _AIChatPageState extends State<AIChatPage> {
     required String question,
     required IconData icon,
   }) {
-    return ActionChip(
-      avatar: Icon(icon, size: 16, color: _primaryCyan),
-      side: BorderSide(color: _primaryCyan.withValues(alpha: 0.18)),
-      backgroundColor: _primaryCyan.withValues(alpha: 0.06),
-      labelStyle: TextStyle(
-        color: Colors.black87,
-        fontSize: 12.8,
-        fontWeight: FontWeight.w600,
-        height: widget.isArabic ? 1.45 : 1.3,
-      ),
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
-      materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-      onPressed: () => _sendMessage(presetText: question),
-      label: Text(question),
+    return AnimatedBuilder(
+      animation: BackendStatusController.instance,
+      builder: (context, _) {
+        final isBackendOffline =
+            BackendStatusController.instance.snapshot.isOffline;
+
+        return ActionChip(
+          avatar: Icon(icon, size: 16, color: _primaryCyan),
+          side: BorderSide(color: _primaryCyan.withValues(alpha: 0.18)),
+          backgroundColor: _primaryCyan.withValues(alpha: 0.06),
+          labelStyle: TextStyle(
+            color: Colors.black87,
+            fontSize: 12.8,
+            fontWeight: FontWeight.w600,
+            height: widget.isArabic ? 1.45 : 1.3,
+          ),
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+          materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+          onPressed: isBackendOffline
+              ? null
+              : () => _sendMessage(presetText: question),
+          label: Text(question),
+        );
+      },
     );
   }
 
@@ -1806,48 +1850,67 @@ class _AIChatPageState extends State<AIChatPage> {
                       ],
                       if (hasFooterActions) ...[
                         const SizedBox(height: 8),
-                        Wrap(
-                          spacing: 6,
-                          runSpacing: 6,
-                          children: [
-                            if (message.canTranslate)
-                              _buildMessageActionButton(
-                                label: _translateButtonLabel(message),
-                                icon: Icons.translate_outlined,
-                                onPressed: message.isTranslating
-                                    ? null
-                                    : () => _toggleMessageTranslation(message),
-                              ),
-                            if (message.canFeedback)
-                              _buildMessageActionButton(
-                                label: widget.isArabic ? 'مفيد' : 'Helpful',
-                                icon: Icons.thumb_up_alt_outlined,
-                                foregroundColor: message.helpful == true
-                                    ? Colors.green.shade700
-                                    : null,
-                                onPressed: () => _submitFeedback(message, true),
-                              ),
-                            if (message.canFeedback)
-                              _buildMessageActionButton(
-                                label: widget.isArabic
-                                    ? 'غير مفيد'
-                                    : 'Not helpful',
-                                icon: Icons.thumb_down_alt_outlined,
-                                foregroundColor: message.helpful == false
-                                    ? Colors.red.shade700
-                                    : null,
-                                onPressed: () =>
-                                    _submitFeedback(message, false),
-                              ),
-                            if (message.sources.isNotEmpty)
-                              _buildMessageActionButton(
-                                label: widget.isArabic
-                                    ? 'عرض المرجع الكامل'
-                                    : 'View full reference',
-                                icon: Icons.visibility_outlined,
-                                onPressed: () => _showReferenceView(message),
-                              ),
-                          ],
+                        AnimatedBuilder(
+                          animation: BackendStatusController.instance,
+                          builder: (context, _) {
+                            final isBackendOffline = BackendStatusController
+                                .instance
+                                .snapshot
+                                .isOffline;
+
+                            return Wrap(
+                              spacing: 6,
+                              runSpacing: 6,
+                              children: [
+                                if (message.canTranslate)
+                                  _buildMessageActionButton(
+                                    label: _translateButtonLabel(message),
+                                    icon: Icons.translate_outlined,
+                                    onPressed:
+                                        message.isTranslating ||
+                                            (isBackendOffline &&
+                                                message.translatedText == null)
+                                        ? null
+                                        : () => _toggleMessageTranslation(
+                                            message,
+                                          ),
+                                  ),
+                                if (message.canFeedback)
+                                  _buildMessageActionButton(
+                                    label: widget.isArabic ? 'مفيد' : 'Helpful',
+                                    icon: Icons.thumb_up_alt_outlined,
+                                    foregroundColor: message.helpful == true
+                                        ? Colors.green.shade700
+                                        : null,
+                                    onPressed: isBackendOffline
+                                        ? null
+                                        : () => _submitFeedback(message, true),
+                                  ),
+                                if (message.canFeedback)
+                                  _buildMessageActionButton(
+                                    label: widget.isArabic
+                                        ? 'غير مفيد'
+                                        : 'Not helpful',
+                                    icon: Icons.thumb_down_alt_outlined,
+                                    foregroundColor: message.helpful == false
+                                        ? Colors.red.shade700
+                                        : null,
+                                    onPressed: isBackendOffline
+                                        ? null
+                                        : () => _submitFeedback(message, false),
+                                  ),
+                                if (message.sources.isNotEmpty)
+                                  _buildMessageActionButton(
+                                    label: widget.isArabic
+                                        ? 'عرض المرجع الكامل'
+                                        : 'View full source',
+                                    icon: Icons.menu_book_outlined,
+                                    onPressed: () =>
+                                        _showReferenceView(message),
+                                  ),
+                              ],
+                            );
+                          },
                         ),
                       ],
                     ],
@@ -1951,77 +2014,116 @@ class _AIChatPageState extends State<AIChatPage> {
   }
 
   Widget _buildInputArea() {
-    return Container(
-      padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.05),
-            blurRadius: 20,
-            offset: const Offset(0, -5),
+    return AnimatedBuilder(
+      animation: BackendStatusController.instance,
+      builder: (context, _) {
+        final isBackendOffline =
+            BackendStatusController.instance.snapshot.isOffline;
+        final canSend = !_isTyping && !isBackendOffline;
+
+        return Container(
+          padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.05),
+                blurRadius: 20,
+                offset: const Offset(0, -5),
+              ),
+            ],
           ),
-        ],
-      ),
-      child: SafeArea(
-        child: Row(
-          children: [
-            IconButton(
-              icon: Icon(Icons.attach_file, color: _primaryCyan),
-              onPressed: () {},
-            ),
-            Expanded(
-              child: Container(
-                decoration: BoxDecoration(
-                  color: const Color(0xFFF7F8FC),
-                  borderRadius: BorderRadius.circular(25),
-                  border: Border.all(color: Colors.grey.shade300),
-                ),
-                child: TextField(
-                  controller: _messageController,
-                  textAlign: widget.isArabic ? TextAlign.right : TextAlign.left,
-                  decoration: InputDecoration(
-                    hintText: widget.isArabic
-                        ? 'اكتب رسالتك هنا...'
-                        : 'Type your message...',
-                    hintStyle: TextStyle(color: Colors.grey[400]),
-                    border: InputBorder.none,
-                    contentPadding: const EdgeInsets.symmetric(
-                      horizontal: 20,
-                      vertical: 15,
+          child: SafeArea(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Row(
+                  children: [
+                    IconButton(
+                      icon: Icon(Icons.attach_file, color: _primaryCyan),
+                      onPressed: () {},
                     ),
-                  ),
-                  onSubmitted: (_) => _sendMessage(),
-                ),
-              ),
-            ),
-            const SizedBox(width: 8),
-            GestureDetector(
-              onTap: _isTyping ? null : _sendMessage,
-              child: Opacity(
-                opacity: _isTyping ? 0.6 : 1.0,
-                child: Container(
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    gradient: LinearGradient(
-                      colors: [_primaryCyan, _accentPurple],
-                    ),
-                    shape: BoxShape.circle,
-                    boxShadow: [
-                      BoxShadow(
-                        color: _primaryCyan.withValues(alpha: 0.4),
-                        blurRadius: 10,
-                        offset: const Offset(0, 4),
+                    Expanded(
+                      child: Container(
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFF7F8FC),
+                          borderRadius: BorderRadius.circular(25),
+                          border: Border.all(color: Colors.grey.shade300),
+                        ),
+                        child: TextField(
+                          controller: _messageController,
+                          textAlign: widget.isArabic
+                              ? TextAlign.right
+                              : TextAlign.left,
+                          decoration: InputDecoration(
+                            hintText: widget.isArabic
+                                ? 'اكتب رسالتك هنا...'
+                                : 'Type your message...',
+                            hintStyle: TextStyle(color: Colors.grey[400]),
+                            border: InputBorder.none,
+                            contentPadding: const EdgeInsets.symmetric(
+                              horizontal: 20,
+                              vertical: 15,
+                            ),
+                          ),
+                          onSubmitted: canSend ? (_) => _sendMessage() : null,
+                        ),
                       ),
-                    ],
-                  ),
-                  child: const Icon(Icons.send, color: Colors.white, size: 20),
+                    ),
+                    const SizedBox(width: 8),
+                    GestureDetector(
+                      onTap: canSend ? _sendMessage : null,
+                      child: Opacity(
+                        opacity: canSend ? 1.0 : 0.45,
+                        child: Container(
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            gradient: LinearGradient(
+                              colors: isBackendOffline
+                                  ? const [Color(0xFFCBD5E1), Color(0xFF94A3B8)]
+                                  : [_primaryCyan, _accentPurple],
+                            ),
+                            shape: BoxShape.circle,
+                            boxShadow: [
+                              BoxShadow(
+                                color:
+                                    (isBackendOffline
+                                            ? Colors.grey
+                                            : _primaryCyan)
+                                        .withValues(alpha: 0.32),
+                                blurRadius: 10,
+                                offset: const Offset(0, 4),
+                              ),
+                            ],
+                          ),
+                          child: const Icon(
+                            Icons.send,
+                            color: Colors.white,
+                            size: 20,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
-              ),
+                if (isBackendOffline) ...[
+                  const SizedBox(height: 10),
+                  Text(
+                    _backendUnavailableMessage,
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(
+                      color: Color(0xFF7F1D1D),
+                      fontSize: 12.5,
+                      fontWeight: FontWeight.w600,
+                      height: 1.4,
+                    ),
+                  ),
+                ],
+              ],
             ),
-          ],
-        ),
-      ),
+          ),
+        );
+      },
     );
   }
 

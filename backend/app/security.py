@@ -47,25 +47,27 @@ def hash_value(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
-def create_access_token(*, subject: str, email: str) -> str:
+def create_access_token(*, subject: str, email: str, role: str) -> str:
     settings = get_settings()
     return encode_jwt(
         {
             "sub": subject,
             "email": email,
+            "role": role,
             "type": "access",
             "exp": int((utc_now() + timedelta(seconds=settings.access_token_ttl_seconds)).timestamp()),
         }
     )
 
 
-def create_refresh_token(*, subject: str, email: str) -> tuple[str, datetime]:
+def create_refresh_token(*, subject: str, email: str, role: str) -> tuple[str, datetime]:
     settings = get_settings()
     expires_at = utc_now() + timedelta(seconds=settings.refresh_token_ttl_seconds)
     token = encode_jwt(
         {
             "sub": subject,
             "email": email,
+            "role": role,
             "type": "refresh",
             "exp": int(expires_at.timestamp()),
         }

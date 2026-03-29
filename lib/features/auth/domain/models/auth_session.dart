@@ -7,6 +7,7 @@ class AuthSession {
     required this.userId,
     required this.userEmail,
     required this.userFullName,
+    required this.role,
   });
 
   final String accessToken;
@@ -16,11 +17,13 @@ class AuthSession {
   final String userId;
   final String userEmail;
   final String userFullName;
+  final String role;
 
   bool get isAccessExpired => DateTime.now().isAfter(accessExpiresAt);
   bool get isRefreshExpired => DateTime.now().isAfter(refreshExpiresAt);
   bool get isAuthenticated =>
       accessToken.isNotEmpty && refreshToken.isNotEmpty && !isRefreshExpired;
+  bool get isAdmin => role == 'admin';
 
   Map<String, dynamic> toMap() {
     return {
@@ -31,6 +34,7 @@ class AuthSession {
       'userId': userId,
       'userEmail': userEmail,
       'userFullName': userFullName,
+      'role': role,
     };
   }
 
@@ -47,6 +51,7 @@ class AuthSession {
       userId: (map['userId'] ?? '').toString(),
       userEmail: (map['userEmail'] ?? '').toString(),
       userFullName: (map['userFullName'] ?? '').toString(),
+      role: (map['role'] ?? 'student').toString(),
     );
   }
 
@@ -67,6 +72,7 @@ class AuthSession {
       userId: (user['id'] ?? '').toString(),
       userEmail: (user['email'] ?? '').toString(),
       userFullName: (user['full_name'] ?? '').toString(),
+      role: (user['role'] ?? 'student').toString(),
     );
   }
 }

@@ -49,3 +49,7 @@ class LoginRequest(StrictModel):
 
 class RefreshRequest(StrictModel):
     refresh_token: str = Field(..., min_length=32, max_length=4096)
+
+
+class UpdateUserRoleRequest(StrictModel):
+    role: str = Field(..., min_length=1, max_length=32)

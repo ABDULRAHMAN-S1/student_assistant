@@ -10,6 +10,10 @@ from app.config import get_settings
 from app.security import hash_value, utc_now
 
 
+DEFAULT_USER_ROLE = "student"
+ADMIN_ROLE = "admin"
+
+
 def _timestamp() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -77,6 +81,14 @@ def init_database() -> None:
             );
             """
         )
+        user_columns = {
+            row["name"]
+            for row in connection.execute("PRAGMA table_info(users)").fetchall()
+        }
+        if "role" not in user_columns:
+            connection.execute(
+                "ALTER TABLE users ADD COLUMN role TEXT NOT NULL DEFAULT 'student'"
+            )
 
 
 def fetch_user_by_email(email: str) -> dict[str, Any] | None:
@@ -97,15 +109,31 @@ def fetch_user_by_id(user_id: str) -> dict[str, Any] | None:
     return dict(row) if row else None
 
 
-def insert_user(*, user_id: str, email: str, full_name: str, password_salt: str, password_hash: str) -> None:
+def list_users() -> list[dict[str, Any]]:
+    with connection_scope() as connection:
+        rows = connection.execute(
+            "SELECT * FROM users ORDER BY created_at ASC, email ASC",
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def insert_user(
+    *,
+    user_id: str,
+    email: str,
+    full_name: str,
+    password_salt: str,
+    password_hash: str,
+    role: str = DEFAULT_USER_ROLE,
+) -> None:
     now = _timestamp()
     with connection_scope() as connection:
         connection.execute(
             """
-            INSERT INTO users (id, email, full_name, password_salt, password_hash, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO users (id, email, full_name, password_salt, password_hash, role, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (user_id, email, full_name, password_salt, password_hash, now, now),
+            (user_id, email, full_name, password_salt, password_hash, role, now, now),
         )
 
 
@@ -116,6 +144,20 @@ def update_user_last_login(user_id: str) -> None:
             "UPDATE users SET last_login_at = ?, updated_at = ? WHERE id = ?",
             (now, now, user_id),
         )
+
+
+def update_user_role(*, user_id: str, role: str) -> dict[str, Any] | None:
+    now = _timestamp()
+    with connection_scope() as connection:
+        connection.execute(
+            "UPDATE users SET role = ?, updated_at = ? WHERE id = ?",
+            (role, now, user_id),
+        )
+        row = connection.execute(
+            "SELECT * FROM users WHERE id = ? LIMIT 1",
+            (user_id,),
+        ).fetchone()
+    return dict(row) if row else None
 
 
 def store_refresh_token(*, token: str, user_id: str, expires_at: datetime) -> None:

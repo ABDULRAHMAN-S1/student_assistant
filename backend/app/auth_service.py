@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from datetime import timedelta
 from uuid import uuid4
 
-from fastapi import HTTPException, Request
+from fastapi import Depends, HTTPException, Request
 
 from app import database
 from app.config import get_settings
@@ -14,6 +14,7 @@ from app.security import create_access_token, create_refresh_token, decode_jwt, 
 
 EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 PASSWORD_MIN_LENGTH = 10
+ALLOWED_ROLES = frozenset({database.DEFAULT_USER_ROLE, database.ADMIN_ROLE})
 
 
 @dataclass(frozen=True)
@@ -21,6 +22,7 @@ class AuthenticatedUser:
     user_id: str
     email: str
     full_name: str
+    role: str
 
 
 def _raise_auth_error(message: str = "Authentication failed.") -> None:
@@ -47,6 +49,39 @@ def validate_password(password: str) -> str:
     return cleaned
 
 
+def _normalize_role(role: str | None) -> str:
+    normalized = (role or database.DEFAULT_USER_ROLE).strip().lower()
+    if not normalized:
+        return database.DEFAULT_USER_ROLE
+    return normalized if normalized in ALLOWED_ROLES else database.DEFAULT_USER_ROLE
+
+
+def validate_role_value(role: str) -> str:
+    normalized = (role or "").strip().lower()
+    if normalized not in ALLOWED_ROLES:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "validation_error",
+                "message": "Role must be either 'student' or 'admin'.",
+            },
+        )
+    return normalized
+
+
+def serialize_user(user: dict[str, object]) -> dict[str, str]:
+    return {
+        "id": str(user["id"]),
+        "email": str(user["email"]),
+        "full_name": str(user["full_name"]),
+        "role": _normalize_role(user.get("role") if isinstance(user, dict) else None),
+    }
+
+
+def list_users() -> list[dict[str, str]]:
+    return [serialize_user(user) for user in database.list_users()]
+
+
 def register_user(*, email: str, password: str, full_name: str) -> dict[str, object]:
     normalized_email = normalize_email(email)
     cleaned_full_name = (full_name or "").strip()
@@ -65,8 +100,14 @@ def register_user(*, email: str, password: str, full_name: str) -> dict[str, obj
         full_name=cleaned_full_name,
         password_salt=password_salt,
         password_hash=password_hash,
+        role=database.DEFAULT_USER_ROLE,
     )
-    return issue_session(user_id=user_id, email=normalized_email, full_name=cleaned_full_name)
+    return issue_session(
+        user_id=user_id,
+        email=normalized_email,
+        full_name=cleaned_full_name,
+        role=database.DEFAULT_USER_ROLE,
+    )
 
 
 def authenticate_user(*, email: str, password: str) -> dict[str, object]:
@@ -83,13 +124,18 @@ def authenticate_user(*, email: str, password: str) -> dict[str, object]:
         user_id=str(user["id"]),
         email=str(user["email"]),
         full_name=str(user["full_name"]),
+        role=_normalize_role(user.get("role")),
     )
 
 
-def issue_session(*, user_id: str, email: str, full_name: str) -> dict[str, object]:
+def issue_session(*, user_id: str, email: str, full_name: str, role: str) -> dict[str, object]:
     settings = get_settings()
-    access_token = create_access_token(subject=user_id, email=email)
-    refresh_token, refresh_expires_at = create_refresh_token(subject=user_id, email=email)
+    access_token = create_access_token(subject=user_id, email=email, role=role)
+    refresh_token, refresh_expires_at = create_refresh_token(
+        subject=user_id,
+        email=email,
+        role=role,
+    )
     database.store_refresh_token(token=refresh_token, user_id=user_id, expires_at=refresh_expires_at)
     access_expires_at = int((database.utc_now() + timedelta(seconds=settings.access_token_ttl_seconds)).timestamp())
     return {
@@ -102,6 +148,7 @@ def issue_session(*, user_id: str, email: str, full_name: str) -> dict[str, obje
             "id": user_id,
             "email": email,
             "full_name": full_name,
+            "role": role,
         },
     }
 
@@ -123,7 +170,35 @@ def refresh_session(refresh_token: str) -> dict[str, object]:
         user_id=str(user["id"]),
         email=str(user["email"]),
         full_name=str(user["full_name"]),
+        role=_normalize_role(user.get("role")),
     )
+
+
+def update_user_role(*, user_id: str, role: str) -> dict[str, str]:
+    normalized_role = validate_role_value(role)
+    user = database.fetch_user_by_id(user_id)
+    if user is None:
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "code": "user_not_found",
+                "message": "User was not found.",
+            },
+        )
+
+    updated_user = database.update_user_role(
+        user_id=str(user["id"]),
+        role=normalized_role,
+    )
+    if updated_user is None:
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "code": "user_not_found",
+                "message": "User was not found.",
+            },
+        )
+    return serialize_user(updated_user)
 
 
 def require_authenticated_user(request: Request) -> AuthenticatedUser:
@@ -141,4 +216,30 @@ def require_authenticated_user(request: Request) -> AuthenticatedUser:
         user_id=str(user["id"]),
         email=str(user["email"]),
         full_name=str(user["full_name"]),
+        role=_normalize_role(user.get("role")),
     )
+
+
+def require_role(required_roles: list[str]):
+    allowed_roles = {
+        role.strip().lower()
+        for role in required_roles
+        if role.strip()
+    }
+    if not allowed_roles:
+        raise ValueError("At least one role must be provided.")
+
+    def dependency(
+        current_user: AuthenticatedUser = Depends(require_authenticated_user),
+    ) -> AuthenticatedUser:
+        if current_user.role not in allowed_roles:
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "code": "forbidden",
+                    "message": "You do not have permission to access this resource.",
+                },
+            )
+        return current_user
+
+    return dependency

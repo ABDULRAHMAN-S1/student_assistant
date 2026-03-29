@@ -28,6 +28,19 @@ class _RegulationSearchPageState extends State<RegulationSearchPage> {
   bool _hasSearched = false;
   List<RegulationSource> _results = const [];
 
+  bool get _isBackendOffline =>
+      BackendStatusController.instance.snapshot.isOffline;
+
+  String get _backendUnavailableMessage => widget.isArabic
+      ? 'الخادم غير متاح حالياً. شغّل الـ backend المحلي ثم حدّث الحالة من البطاقة أدناه.'
+      : 'The backend is currently unavailable. Start the local backend, then refresh the status below.';
+
+  void _showBackendUnavailableSnackBar() {
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(_backendUnavailableMessage)));
+  }
+
   bool _isSessionError(AssistantApiException error) {
     return error.kind == AssistantApiErrorKind.authenticationRequired ||
         error.kind == AssistantApiErrorKind.sessionExpired ||
@@ -57,6 +70,11 @@ class _RegulationSearchPageState extends State<RegulationSearchPage> {
           ),
         ),
       );
+      return;
+    }
+
+    if (_isBackendOffline) {
+      _showBackendUnavailableSnackBar();
       return;
     }
 
@@ -253,46 +271,81 @@ class _RegulationSearchPageState extends State<RegulationSearchPage> {
                   ),
                 ],
               ),
-              child: Row(
+              child: Column(
                 children: [
-                  Expanded(
-                    child: TextField(
-                      controller: _controller,
-                      textAlign: widget.isArabic
-                          ? TextAlign.right
-                          : TextAlign.left,
-                      decoration: InputDecoration(
-                        hintText: widget.isArabic
-                            ? 'ابحث في المصادر الرسمية...'
-                            : 'Search official sources...',
-                        filled: true,
-                        fillColor: const Color(0xFFF7F8FC),
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(14),
-                          borderSide: BorderSide.none,
-                        ),
-                        contentPadding: const EdgeInsets.symmetric(
-                          horizontal: 16,
-                          vertical: 14,
-                        ),
-                      ),
-                      onSubmitted: (_) => _search(),
-                    ),
+                  AnimatedBuilder(
+                    animation: BackendStatusController.instance,
+                    builder: (context, _) {
+                      final isBackendOffline =
+                          BackendStatusController.instance.snapshot.isOffline;
+                      final canSearch = !_isLoading && !isBackendOffline;
+
+                      return Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          Row(
+                            children: [
+                              Expanded(
+                                child: TextField(
+                                  controller: _controller,
+                                  textAlign: widget.isArabic
+                                      ? TextAlign.right
+                                      : TextAlign.left,
+                                  decoration: InputDecoration(
+                                    hintText: widget.isArabic
+                                        ? 'ابحث في المصادر الرسمية...'
+                                        : 'Search official sources...',
+                                    filled: true,
+                                    fillColor: const Color(0xFFF7F8FC),
+                                    border: OutlineInputBorder(
+                                      borderRadius: BorderRadius.circular(14),
+                                      borderSide: BorderSide.none,
+                                    ),
+                                    contentPadding: const EdgeInsets.symmetric(
+                                      horizontal: 16,
+                                      vertical: 14,
+                                    ),
+                                  ),
+                                  onSubmitted: canSearch
+                                      ? (_) => _search()
+                                      : null,
+                                ),
+                              ),
+                              const SizedBox(width: 10),
+                              ElevatedButton(
+                                onPressed: canSearch ? _search : null,
+                                style: ElevatedButton.styleFrom(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 18,
+                                    vertical: 15,
+                                  ),
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(14),
+                                  ),
+                                ),
+                                child: Text(widget.isArabic ? 'بحث' : 'Search'),
+                              ),
+                            ],
+                          ),
+                          if (isBackendOffline) ...[
+                            const SizedBox(height: 10),
+                            Text(
+                              _backendUnavailableMessage,
+                              textAlign: TextAlign.center,
+                              style: const TextStyle(
+                                color: Color(0xFF7F1D1D),
+                                fontSize: 12.5,
+                                fontWeight: FontWeight.w600,
+                                height: 1.4,
+                              ),
+                            ),
+                          ],
+                        ],
+                      );
+                    },
                   ),
-                  const SizedBox(width: 10),
-                  ElevatedButton(
-                    onPressed: _isLoading ? null : _search,
-                    style: ElevatedButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 18,
-                        vertical: 15,
-                      ),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(14),
-                      ),
-                    ),
-                    child: Text(widget.isArabic ? 'بحث' : 'Search'),
-                  ),
+                  const SizedBox(height: 12),
+                  BackendStatusBanner(isArabic: widget.isArabic),
                 ],
               ),
             ),
@@ -342,17 +395,6 @@ class _RegulationSearchPageState extends State<RegulationSearchPage> {
                             [
                               if (result.secondaryDisplayArticle.isNotEmpty)
                                 result.secondaryDisplayArticle,
-                              Padding(
-                                padding: const EdgeInsets.fromLTRB(
-                                  16,
-                                  0,
-                                  16,
-                                  8,
-                                ),
-                                child: BackendStatusBanner(
-                                  isArabic: widget.isArabic,
-                                ),
-                              ),
                               if (result.secondaryDisplaySection.isNotEmpty)
                                 result.secondaryDisplaySection,
                               if (result.contentPreview.isNotEmpty)

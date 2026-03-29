@@ -120,6 +120,7 @@ class _StudentAssistantAppState extends State<StudentAssistantApp> {
                 )
               : HomePage(
                   isArabic: isArabic,
+                  authSession: session.authSession,
                   onToggleLanguage: () {
                     session.toggleLanguage();
                   },
