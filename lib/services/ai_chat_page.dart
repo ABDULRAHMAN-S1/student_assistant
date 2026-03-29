@@ -1,11 +1,15 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../app/backend_status_banner.dart';
+import '../app/backend_status_controller.dart';
 import '../features/ai_assistant/data/local/chat_history_store.dart';
+import '../features/ai_assistant/data/remote/assistant_api_client.dart';
 import '../features/ai_assistant/data/repositories/assistant_repository.dart';
 import '../features/ai_assistant/data/services/message_translation_service.dart';
 import '../features/ai_assistant/domain/models/chat_message.dart';
 import '../features/ai_assistant/domain/models/regulation_source.dart';
+import '../features/ai_assistant/presentation/assistant_error_messages.dart';
 import '../features/courses/data/demo/demo_course_repository.dart';
 import '../features/events/data/demo/demo_event_repository.dart';
 import '../features/profile/data/demo/demo_profile_repository.dart';
@@ -19,11 +23,13 @@ import 'regulation_search_page.dart';
 class AIChatPage extends StatefulWidget {
   final bool isArabic;
   final int profileRefreshToken;
+  final Future<void> Function()? onSessionExpired;
 
   const AIChatPage({
     super.key,
     required this.isArabic,
     this.profileRefreshToken = 0,
+    this.onSessionExpired,
   });
 
   @override
@@ -547,6 +553,18 @@ class _AIChatPageState extends State<AIChatPage> {
     _scrollToBottom();
   }
 
+  bool _isSessionError(AssistantApiException error) {
+    return error.kind == AssistantApiErrorKind.authenticationRequired ||
+        error.kind == AssistantApiErrorKind.sessionExpired ||
+        error.kind == AssistantApiErrorKind.unauthorized;
+  }
+
+  bool _shouldRefreshBackendIndicator(AssistantApiException error) {
+    return error.kind == AssistantApiErrorKind.network ||
+        error.kind == AssistantApiErrorKind.timeout ||
+        error.kind == AssistantApiErrorKind.invalidResponse;
+  }
+
   Future<void> _sendMessage({String? presetText}) async {
     if (_isTyping) return;
 
@@ -579,14 +597,34 @@ class _AIChatPageState extends State<AIChatPage> {
         canFeedback: response.sources.isNotEmpty,
         canTranslate: true,
       );
+    } on AssistantApiException catch (error) {
+      if (!mounted) return;
+
+      setState(() => _isTyping = false);
+      if (_isSessionError(error)) {
+        await widget.onSessionExpired?.call();
+        return;
+      }
+      if (_shouldRefreshBackendIndicator(error)) {
+        BackendStatusController.instance.refresh(showCheckingState: false);
+      }
+
+      _addBotMessage(
+        localizeAssistantError(
+          error,
+          isArabic: widget.isArabic,
+          action: AssistantRequestAction.chat,
+        ),
+      );
     } catch (_) {
       if (!mounted) return;
 
       setState(() => _isTyping = false);
       _addBotMessage(
-        widget.isArabic
-            ? 'تعذر الاتصال بالمساعد الآن. حاول مرة أخرى.'
-            : 'Could not reach the assistant right now. Please try again.',
+        localizeUnexpectedAssistantError(
+          isArabic: widget.isArabic,
+          action: AssistantRequestAction.chat,
+        ),
       );
     }
   }
@@ -639,7 +677,10 @@ class _AIChatPageState extends State<AIChatPage> {
   Future<void> _openSearchPage() async {
     await Navigator.of(context).push(
       MaterialPageRoute(
-        builder: (_) => RegulationSearchPage(isArabic: widget.isArabic),
+        builder: (_) => RegulationSearchPage(
+          isArabic: widget.isArabic,
+          onSessionExpired: widget.onSessionExpired,
+        ),
       ),
     );
   }
@@ -1030,6 +1071,42 @@ class _AIChatPageState extends State<AIChatPage> {
         language: widget.isArabic ? 'ar' : 'en',
         sources: message.sources,
       );
+    } on AssistantApiException catch (error) {
+      if (!mounted) return;
+
+      final currentMessageIndex = _resolveMessageIndex(
+        message,
+        preferredIndex: messageIndex,
+      );
+      if (currentMessageIndex < 0) return;
+
+      setState(() {
+        _messages[currentMessageIndex] = message.copyWith(
+          helpful: previousHelpful,
+        );
+      });
+      await _persistHistory();
+
+      if (_isSessionError(error)) {
+        await widget.onSessionExpired?.call();
+        return;
+      }
+      if (_shouldRefreshBackendIndicator(error)) {
+        BackendStatusController.instance.refresh(showCheckingState: false);
+      }
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            localizeAssistantError(
+              error,
+              isArabic: widget.isArabic,
+              action: AssistantRequestAction.feedback,
+            ),
+          ),
+        ),
+      );
     } catch (_) {
       if (!mounted) return;
 
@@ -1049,9 +1126,10 @@ class _AIChatPageState extends State<AIChatPage> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            widget.isArabic
-                ? 'تعذر إرسال التقييم الآن.'
-                : 'Could not send feedback right now.',
+            localizeUnexpectedAssistantError(
+              isArabic: widget.isArabic,
+              action: AssistantRequestAction.feedback,
+            ),
           ),
         ),
       );
@@ -1108,6 +1186,39 @@ class _AIChatPageState extends State<AIChatPage> {
         );
       });
       await _persistHistory();
+    } on AssistantApiException catch (error) {
+      if (!mounted) return;
+
+      final currentMessageIndex = _resolveMessageIndex(
+        message,
+        preferredIndex: messageIndex,
+      );
+      if (currentMessageIndex < 0) return;
+
+      setState(() {
+        _messages[currentMessageIndex] = message.copyWith(isTranslating: false);
+      });
+
+      if (_isSessionError(error)) {
+        await widget.onSessionExpired?.call();
+        return;
+      }
+      if (_shouldRefreshBackendIndicator(error)) {
+        BackendStatusController.instance.refresh(showCheckingState: false);
+      }
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            localizeAssistantError(
+              error,
+              isArabic: widget.isArabic,
+              action: AssistantRequestAction.translate,
+            ),
+          ),
+        ),
+      );
     } catch (_) {
       if (!mounted) return;
 
@@ -1123,9 +1234,10 @@ class _AIChatPageState extends State<AIChatPage> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            widget.isArabic
-                ? 'تعذر ترجمة هذه الرسالة الآن.'
-                : 'Could not translate this message right now.',
+            localizeUnexpectedAssistantError(
+              isArabic: widget.isArabic,
+              action: AssistantRequestAction.translate,
+            ),
           ),
         ),
       );
@@ -1397,14 +1509,11 @@ class _AIChatPageState extends State<AIChatPage> {
                     fontWeight: FontWeight.bold,
                   ),
                 ),
-                Text(
-                  widget.isArabic
-                      ? 'متصل • جاهز للمساعدة'
-                      : 'Online • Ready to help',
-                  style: TextStyle(
-                    color: Colors.white.withValues(alpha: 0.8),
-                    fontSize: 14,
-                  ),
+                const SizedBox(height: 6),
+                BackendStatusBanner(
+                  isArabic: widget.isArabic,
+                  compact: true,
+                  forDarkBackground: true,
                 ),
               ],
             ),
@@ -1602,7 +1711,10 @@ class _AIChatPageState extends State<AIChatPage> {
         ? message.translatedText!
         : _messageBodyText(message);
     final hasFooterActions =
-        !isUser && (message.sources.isNotEmpty || message.canTranslate);
+        !isUser &&
+        (message.sources.isNotEmpty ||
+            message.canTranslate ||
+            message.canFeedback);
 
     return Align(
       alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
@@ -1705,6 +1817,27 @@ class _AIChatPageState extends State<AIChatPage> {
                                 onPressed: message.isTranslating
                                     ? null
                                     : () => _toggleMessageTranslation(message),
+                              ),
+                            if (message.canFeedback)
+                              _buildMessageActionButton(
+                                label: widget.isArabic ? 'مفيد' : 'Helpful',
+                                icon: Icons.thumb_up_alt_outlined,
+                                foregroundColor: message.helpful == true
+                                    ? Colors.green.shade700
+                                    : null,
+                                onPressed: () => _submitFeedback(message, true),
+                              ),
+                            if (message.canFeedback)
+                              _buildMessageActionButton(
+                                label: widget.isArabic
+                                    ? 'غير مفيد'
+                                    : 'Not helpful',
+                                icon: Icons.thumb_down_alt_outlined,
+                                foregroundColor: message.helpful == false
+                                    ? Colors.red.shade700
+                                    : null,
+                                onPressed: () =>
+                                    _submitFeedback(message, false),
                               ),
                             if (message.sources.isNotEmpty)
                               _buildMessageActionButton(

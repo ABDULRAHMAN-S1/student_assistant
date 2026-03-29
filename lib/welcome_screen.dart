@@ -1,12 +1,13 @@
 import 'package:flutter/material.dart';
 
 import 'create_account_screen.dart';
+import 'features/auth/domain/models/auth_session.dart';
 import 'login_page.dart';
 
 class WelcomeScreen extends StatefulWidget {
   final bool isArabic;
   final VoidCallback onToggleLanguage;
-  final void Function({bool asGuest}) onDone;
+  final Future<void> Function({bool asGuest, AuthSession? sessionData}) onDone;
 
   const WelcomeScreen({
     super.key,
@@ -103,8 +104,10 @@ class _WelcomeScreenState extends State<WelcomeScreen> {
                               MaterialPageRoute(
                                 builder: (context) => LoginPage(
                                   isArabic: widget.isArabic,
-                                  onLoginSuccess: () =>
-                                      widget.onDone(asGuest: false),
+                                  onLoginSuccess: (session) => widget.onDone(
+                                    asGuest: false,
+                                    sessionData: session,
+                                  ),
                                   onToggleLanguage: widget.onToggleLanguage,
                                   onDone: widget.onDone,
                                 ),
@@ -124,8 +127,10 @@ class _WelcomeScreenState extends State<WelcomeScreen> {
                               MaterialPageRoute(
                                 builder: (context) => CreateAccountScreen(
                                   isArabic: widget.isArabic,
-                                  onRegisterSuccess: () =>
-                                      widget.onDone(asGuest: false),
+                                  onRegisterSuccess: (session) => widget.onDone(
+                                    asGuest: false,
+                                    sessionData: session,
+                                  ),
                                   onToggleLanguage: widget.onToggleLanguage,
                                   onDone: widget.onDone,
                                 ),

@@ -1,5 +1,11 @@
 import 'package:flutter/material.dart';
 
+import 'app/backend_status_banner.dart';
+import 'courses_page.dart';
+import 'custom_dialog.dart';
+import 'custom_toast.dart';
+import 'events_page.dart';
+import 'features/auth/domain/models/auth_session.dart';
 import 'features/courses/data/demo/demo_course_repository.dart';
 import 'features/courses/data/repositories/course_repository.dart';
 import 'features/events/data/demo/demo_event_repository.dart';
@@ -9,13 +15,9 @@ import 'features/profile/data/local/profile_store.dart';
 import 'features/profile/presentation/pages/profile_page.dart';
 import 'features/recommendations/data/services/recommendation_engine.dart';
 import 'features/recommendations/domain/models/recommendation_item.dart';
-import 'services/ai_chat_page.dart';
-import 'courses_page.dart';
-import 'custom_dialog.dart';
-import 'custom_toast.dart';
-import 'events_page.dart';
 import 'login_page.dart';
 import 'reviews_page.dart';
+import 'services/ai_chat_page.dart';
 
 class AppColors {
   static const background = Color(0xFFFBF4FC);
@@ -36,8 +38,9 @@ class HomePage extends StatefulWidget {
   final bool isArabic;
   final VoidCallback? onToggleLanguage;
   final bool isGuest;
-  final VoidCallback? onLoginSuccess;
+  final Future<void> Function(AuthSession session)? onLoginSuccess;
   final VoidCallback? onLogout;
+  final Future<void> Function()? onSessionExpired;
 
   const HomePage({
     super.key,
@@ -46,6 +49,7 @@ class HomePage extends StatefulWidget {
     this.isGuest = false,
     this.onLoginSuccess,
     this.onLogout,
+    this.onSessionExpired,
   });
 
   @override
@@ -53,6 +57,8 @@ class HomePage extends StatefulWidget {
 }
 
 class _HomePageState extends State<HomePage> {
+  static const Set<int> _protectedPageIndices = {1, 2, 4};
+
   late bool _isArabic;
   final CourseRepository _courseRepository = DemoCourseRepository();
   final EventRepository _eventRepository = DemoEventRepository();
@@ -60,6 +66,8 @@ class _HomePageState extends State<HomePage> {
       const RecommendationEngine();
   int currentIndex = 0;
   int _profileRefreshSeed = 0;
+  int? _pendingProtectedPageIndex;
+  bool _isHandlingSessionExpiry = false;
   late Future<List<RecommendationItem>> _recommendationsFuture;
 
   @override
@@ -78,6 +86,9 @@ class _HomePageState extends State<HomePage> {
     }
     if (oldWidget.isGuest != widget.isGuest) {
       _recommendationsFuture = _loadRecommendations();
+      if (widget.isGuest && _protectedPageIndices.contains(currentIndex)) {
+        currentIndex = 0;
+      }
     }
   }
 
@@ -107,7 +118,39 @@ class _HomePageState extends State<HomePage> {
     widget.onToggleLanguage?.call();
   }
 
-  void _showLoginDialog(String featureName) {
+  Future<void> _openLoginPage({int? targetPageIndex}) async {
+    final resolvedTargetIndex = targetPageIndex ?? _pendingProtectedPageIndex;
+    await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => LoginPage(
+          isArabic: _isArabic,
+          onLoginSuccess: (session) async {
+            await widget.onLoginSuccess?.call(session);
+            if (!mounted) return;
+            setState(() {
+              _recommendationsFuture = _loadRecommendations();
+              _pendingProtectedPageIndex = null;
+              if (resolvedTargetIndex != null) {
+                currentIndex = resolvedTargetIndex;
+              }
+            });
+            CustomToast.show(
+              context: context,
+              message: _isArabic
+                  ? '✅ تم تسجيل الدخول بنجاح!'
+                  : '✅ Login successful!',
+              icon: Icons.check_circle,
+              color: Colors.green,
+            );
+          },
+        ),
+      ),
+    );
+  }
+
+  void _showLoginDialog(String featureName, {int? targetPageIndex}) {
+    _pendingProtectedPageIndex = targetPageIndex;
     CustomDialog.show(
       context: context,
       title: _isArabic ? '🔒 تسجيل مطلوب' : '🔒 Login Required',
@@ -119,28 +162,48 @@ class _HomePageState extends State<HomePage> {
       primaryButtonText: _isArabic ? 'تسجيل الدخول' : 'Login',
       secondaryButtonText: _isArabic ? 'لاحقاً' : 'Later',
       onPrimaryPressed: () {
-        Navigator.push(
-          context,
-          MaterialPageRoute(
-            builder: (_) => LoginPage(
-              isArabic: _isArabic,
-              onLoginSuccess: () {
-                widget.onLoginSuccess?.call();
-                Navigator.pop(context);
-                CustomToast.show(
-                  context: context,
-                  message: _isArabic
-                      ? '✅ تم تسجيل الدخول بنجاح!'
-                      : '✅ Login successful!',
-                  icon: Icons.check_circle,
-                  color: Colors.green,
-                );
-              },
-            ),
-          ),
-        );
+        _openLoginPage(targetPageIndex: targetPageIndex);
       },
     );
+  }
+
+  Future<void> _handleSessionExpired() async {
+    if (_isHandlingSessionExpiry) {
+      return;
+    }
+
+    _isHandlingSessionExpiry = true;
+    final resumePageIndex = _protectedPageIndices.contains(currentIndex)
+        ? currentIndex
+        : null;
+    _pendingProtectedPageIndex = resumePageIndex;
+
+    try {
+      await widget.onSessionExpired?.call();
+      if (!mounted) return;
+
+      setState(() {
+        currentIndex = 0;
+        _recommendationsFuture = _loadRecommendations();
+      });
+
+      CustomDialog.show(
+        context: context,
+        title: _isArabic ? 'انتهت الجلسة' : 'Session Ended',
+        message: _isArabic
+            ? 'انتهت جلستك أو لم تعد صالحة. سجل الدخول مرة أخرى للمتابعة.'
+            : 'Your session has expired or is no longer valid. Sign in again to continue.',
+        icon: Icons.lock_clock_outlined,
+        color: const Color(0xFF764BA2),
+        primaryButtonText: _isArabic ? 'تسجيل الدخول' : 'Sign in',
+        secondaryButtonText: _isArabic ? 'لاحقاً' : 'Later',
+        onPrimaryPressed: () {
+          _openLoginPage(targetPageIndex: resumePageIndex);
+        },
+      );
+    } finally {
+      _isHandlingSessionExpiry = false;
+    }
   }
 
   void _toast(String msg) {
@@ -161,10 +224,8 @@ class _HomePageState extends State<HomePage> {
   }
 
   void _navigateTo(int index, String featureName) {
-    final protectedPages = [1, 2, 4];
-
-    if (protectedPages.contains(index) && widget.isGuest) {
-      _showLoginDialog(featureName);
+    if (_protectedPageIndices.contains(index) && widget.isGuest) {
+      _showLoginDialog(featureName, targetPageIndex: index);
       return;
     }
 
@@ -177,6 +238,7 @@ class _HomePageState extends State<HomePage> {
       AIChatPage(
         isArabic: _isArabic,
         profileRefreshToken: _profileRefreshSeed,
+        onSessionExpired: _handleSessionExpired,
       ),
       CoursesPage(isArabic: _isArabic),
       EventsPage(isArabic: _isArabic),
@@ -205,6 +267,9 @@ class _HomePageState extends State<HomePage> {
       children: [
         if (widget.isGuest) _buildGuestBanner(),
         if (widget.isGuest) const SizedBox(height: 14),
+
+        BackendStatusBanner(isArabic: _isArabic),
+        const SizedBox(height: 14),
 
         TaibahWelcomeCard(isArabic: _isArabic),
         const SizedBox(height: 14),
@@ -511,7 +576,9 @@ class _HomePageState extends State<HomePage> {
 
   String _recommendationTypeLabel(RecommendationItem item) {
     final isCourse = item.type == RecommendationItem.courseType;
-    return _isArabic ? (isCourse ? 'مقرر' : 'فعالية') : (isCourse ? 'Course' : 'Event');
+    return _isArabic
+        ? (isCourse ? 'مقرر' : 'فعالية')
+        : (isCourse ? 'Course' : 'Event');
   }
 
   String _recommendationDestinationLabel(RecommendationItem item) {
@@ -529,10 +596,7 @@ class _HomePageState extends State<HomePage> {
         _isArabic ? 'التخصص' : 'Specialization',
         item.specializationSignals,
       ),
-      MapEntry(
-        _isArabic ? 'الاهتمامات' : 'Interests',
-        item.interestSignals,
-      ),
+      MapEntry(_isArabic ? 'الاهتمامات' : 'Interests', item.interestSignals),
       MapEntry(
         _isArabic ? 'المستوى الأكاديمي' : 'Academic level',
         item.academicLevelSignals,

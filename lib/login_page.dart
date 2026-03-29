@@ -1,13 +1,18 @@
 import 'package:flutter/material.dart';
 
+import 'app/backend_status_banner.dart';
+import 'app/backend_status_controller.dart';
 import "create_account_screen.dart";
+import 'features/auth/data/remote/auth_api_client.dart';
+import 'features/auth/domain/models/auth_session.dart';
+import 'features/auth/presentation/auth_error_messages.dart';
 import 'forgot_password_screen.dart';
 
 class LoginPage extends StatefulWidget {
   final bool isArabic;
-  final VoidCallback? onLoginSuccess;
+  final Future<void> Function(AuthSession session)? onLoginSuccess;
   final VoidCallback? onToggleLanguage;
-  final void Function({bool asGuest})? onDone;
+  final Future<void> Function({bool asGuest, AuthSession? sessionData})? onDone;
 
   const LoginPage({
     super.key,
@@ -24,8 +29,16 @@ class LoginPage extends StatefulWidget {
 class _LoginPageState extends State<LoginPage> {
   final _email = TextEditingController();
   final _password = TextEditingController();
+  final AuthApiClient _authApiClient = const AuthApiClient();
   bool _hide = true;
   bool _remember = true;
+  bool _isSubmitting = false;
+
+  bool _shouldRefreshBackendIndicator(AuthApiException error) {
+    return error.kind == AuthApiErrorKind.network ||
+        error.kind == AuthApiErrorKind.timeout ||
+        error.kind == AuthApiErrorKind.invalidResponse;
+  }
 
   @override
   void dispose() {
@@ -37,6 +50,93 @@ class _LoginPageState extends State<LoginPage> {
   // ✅ SIMPLE POP - GOES BACK TO WELCOME
   void _goBack() {
     Navigator.pop(context);
+  }
+
+  Future<void> _handleLogin() async {
+    final email = _email.text.trim();
+    final password = _password.text;
+
+    if (email.isEmpty || !email.contains('@')) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            widget.isArabic
+                ? 'أدخل بريداً إلكترونياً صالحاً'
+                : 'Enter a valid email address',
+          ),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+      return;
+    }
+    if (password.length < 10) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            widget.isArabic
+                ? 'كلمة المرور يجب أن تكون 10 أحرف على الأقل'
+                : 'Password must be at least 10 characters long',
+          ),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+      return;
+    }
+
+    setState(() => _isSubmitting = true);
+    try {
+      final session = await _authApiClient.login(
+        email: email,
+        password: password,
+      );
+      await widget.onLoginSuccess?.call(session);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            widget.isArabic
+                ? 'تم تسجيل الدخول بنجاح'
+                : 'Signed in successfully',
+          ),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+      Navigator.of(context).popUntil((route) => route.isFirst);
+    } on AuthApiException catch (error) {
+      if (_shouldRefreshBackendIndicator(error)) {
+        BackendStatusController.instance.refresh(showCheckingState: false);
+      }
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            localizeAuthError(
+              error,
+              isArabic: widget.isArabic,
+              isRegistration: false,
+            ),
+          ),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            localizeUnexpectedAuthError(
+              isArabic: widget.isArabic,
+              isRegistration: false,
+            ),
+          ),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _isSubmitting = false);
+      }
+    }
   }
 
   @override
@@ -133,6 +233,8 @@ class _LoginPageState extends State<LoginPage> {
                       ),
                       textAlign: TextAlign.center,
                     ),
+                    const SizedBox(height: 14),
+                    BackendStatusBanner(isArabic: isAr),
                     const SizedBox(height: 18),
 
                     _SoftTextField(
@@ -206,16 +308,7 @@ class _LoginPageState extends State<LoginPage> {
                       width: double.infinity,
                       height: 52,
                       child: ElevatedButton(
-                        onPressed: () {
-                          widget.onLoginSuccess?.call();
-
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(
-                              content: Text(isAr ? 'تم (ديمو)' : 'Done (demo)'),
-                              behavior: SnackBarBehavior.floating,
-                            ),
-                          );
-                        },
+                        onPressed: _isSubmitting ? null : _handleLogin,
                         style: ElevatedButton.styleFrom(
                           elevation: 0,
                           backgroundColor: Colors.transparent,
@@ -234,7 +327,11 @@ class _LoginPageState extends State<LoginPage> {
                           child: Container(
                             alignment: Alignment.center,
                             child: Text(
-                              isAr ? 'تسجيل الدخول' : 'Login',
+                              _isSubmitting
+                                  ? (isAr
+                                        ? 'جارٍ تسجيل الدخول...'
+                                        : 'Signing in...')
+                                  : (isAr ? 'تسجيل الدخول' : 'Login'),
                               style: const TextStyle(
                                 color: Colors.white,
                                 fontWeight: FontWeight.w900,

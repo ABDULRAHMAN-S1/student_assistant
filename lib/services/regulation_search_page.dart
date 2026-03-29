@@ -1,12 +1,21 @@
 import 'package:flutter/material.dart';
 
+import '../app/backend_status_banner.dart';
+import '../app/backend_status_controller.dart';
+import '../features/ai_assistant/data/remote/assistant_api_client.dart';
 import '../features/ai_assistant/data/repositories/assistant_repository.dart';
 import '../features/ai_assistant/domain/models/regulation_source.dart';
+import '../features/ai_assistant/presentation/assistant_error_messages.dart';
 
 class RegulationSearchPage extends StatefulWidget {
   final bool isArabic;
+  final Future<void> Function()? onSessionExpired;
 
-  const RegulationSearchPage({super.key, required this.isArabic});
+  const RegulationSearchPage({
+    super.key,
+    required this.isArabic,
+    this.onSessionExpired,
+  });
 
   @override
   State<RegulationSearchPage> createState() => _RegulationSearchPageState();
@@ -18,6 +27,18 @@ class _RegulationSearchPageState extends State<RegulationSearchPage> {
   bool _isLoading = false;
   bool _hasSearched = false;
   List<RegulationSource> _results = const [];
+
+  bool _isSessionError(AssistantApiException error) {
+    return error.kind == AssistantApiErrorKind.authenticationRequired ||
+        error.kind == AssistantApiErrorKind.sessionExpired ||
+        error.kind == AssistantApiErrorKind.unauthorized;
+  }
+
+  bool _shouldRefreshBackendIndicator(AssistantApiException error) {
+    return error.kind == AssistantApiErrorKind.network ||
+        error.kind == AssistantApiErrorKind.timeout ||
+        error.kind == AssistantApiErrorKind.invalidResponse;
+  }
 
   Future<void> _search() async {
     final query = _controller.text.trim();
@@ -48,6 +69,38 @@ class _RegulationSearchPageState extends State<RegulationSearchPage> {
         _hasSearched = true;
         _isLoading = false;
       });
+    } on AssistantApiException catch (error) {
+      if (!mounted) return;
+
+      setState(() {
+        _results = const [];
+        _isLoading = false;
+        _hasSearched = true;
+      });
+
+      if (_isSessionError(error)) {
+        final navigator = Navigator.of(context);
+        if (navigator.canPop()) {
+          navigator.pop();
+        }
+        await widget.onSessionExpired?.call();
+        return;
+      }
+      if (_shouldRefreshBackendIndicator(error)) {
+        BackendStatusController.instance.refresh(showCheckingState: false);
+      }
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            localizeAssistantError(
+              error,
+              isArabic: widget.isArabic,
+              action: AssistantRequestAction.search,
+            ),
+          ),
+        ),
+      );
     } catch (_) {
       if (!mounted) return;
       setState(() {
@@ -58,9 +111,10 @@ class _RegulationSearchPageState extends State<RegulationSearchPage> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            widget.isArabic
-                ? 'تعذر تنفيذ البحث الآن.'
-                : 'Could not complete the search right now.',
+            localizeUnexpectedAssistantError(
+              isArabic: widget.isArabic,
+              action: AssistantRequestAction.search,
+            ),
           ),
         ),
       );
@@ -128,10 +182,7 @@ class _RegulationSearchPageState extends State<RegulationSearchPage> {
                     const SizedBox(height: 10),
                     Text(
                       reference.secondaryDisplayArticle,
-                      style: TextStyle(
-                        color: Colors.grey[700],
-                        height: 1.45,
-                      ),
+                      style: TextStyle(color: Colors.grey[700], height: 1.45),
                     ),
                   ],
                   if (reference.secondaryDisplaySection.isNotEmpty) ...[
@@ -179,7 +230,9 @@ class _RegulationSearchPageState extends State<RegulationSearchPage> {
         surfaceTintColor: Colors.transparent,
         elevation: 0,
         title: Text(
-          widget.isArabic ? 'البحث في المصادر الرسمية' : 'Official Sources Search',
+          widget.isArabic
+              ? 'البحث في المصادر الرسمية'
+              : 'Official Sources Search',
           style: const TextStyle(fontWeight: FontWeight.w800),
         ),
       ),
@@ -289,6 +342,17 @@ class _RegulationSearchPageState extends State<RegulationSearchPage> {
                             [
                               if (result.secondaryDisplayArticle.isNotEmpty)
                                 result.secondaryDisplayArticle,
+                              Padding(
+                                padding: const EdgeInsets.fromLTRB(
+                                  16,
+                                  0,
+                                  16,
+                                  8,
+                                ),
+                                child: BackendStatusBanner(
+                                  isArabic: widget.isArabic,
+                                ),
+                              ),
                               if (result.secondaryDisplaySection.isNotEmpty)
                                 result.secondaryDisplaySection,
                               if (result.contentPreview.isNotEmpty)

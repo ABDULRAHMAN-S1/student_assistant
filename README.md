@@ -1,12 +1,13 @@
 # Student Assistant App
 
-Flutter mobile app for students, connected to the Taibah University regulations RAG backend.
+Flutter app for students, connected to the authenticated regulations backend.
 
 ## Main Features
 
 - AI chat for university regulation questions in Arabic and English
-- Per-message translation for AI replies
-- Local chat history
+- Real login and registration flow
+- Per-message translation through the backend
+- Encrypted local chat history and settings
 - Suggested starter questions
 - Full regulation reference view
 - Simple regulation search page
@@ -28,14 +29,11 @@ student_assistant/
 │  ├─ reviews_page.dart
 │  ├─ custom_dialog.dart
 │  ├─ custom_toast.dart
+│  ├─ app/
+│  ├─ features/
 │  └─ services/
-│     ├─ ai_api.dart
-│     ├─ ai_chat_page.dart
-│     ├─ ai_chat_storage.dart
-│     ├─ ai_message_translation.dart
-│     └─ regulation_search_page.dart
 ├─ assets/
-├─ taibah-rag-backend/
+├─ backend/
 └─ pubspec.yaml
 ```
 
@@ -58,23 +56,31 @@ Default behavior:
 - Android emulator: `http://10.0.2.2:8000`
 - Other platforms: `http://127.0.0.1:8000`
 
+For release builds, use HTTPS:
+
+```bash
+flutter build apk --dart-define=AI_CHAT_API_BASE_URL=https://api.example.com
+```
+
 ## Main AI Runtime Flow
 
 - `lib/services/ai_chat_page.dart`
   UI for chat, history, suggestions, references, feedback, and translation
-- `lib/services/ai_api.dart`
-  Backend API client for chat, search, and feedback
-- `lib/services/ai_chat_storage.dart`
-  Local Hive-based chat history persistence
-- `lib/services/ai_message_translation.dart`
-  Lightweight per-message translation helper
+- `lib/features/ai_assistant/data/remote/assistant_api_client.dart`
+  Authenticated backend API client for chat, search, feedback, and translation
+- `lib/features/auth/data/remote/auth_api_client.dart`
+  Backend auth client for register, login, and refresh
+- `lib/app/app_settings_store.dart`
+  Encrypted app settings and persisted auth session state
 
 ## Backend
 
 The backend lives in:
 
 ```text
-taibah-rag-backend/
+backend/
 ```
 
-See `taibah-rag-backend/README.md` for API endpoints, backend startup, and data pipeline details.
+See `backend/README.md` for API endpoints and backend startup.
+
+See `RELEASE_CHECKLIST.md` for backend and Flutter deployment requirements.

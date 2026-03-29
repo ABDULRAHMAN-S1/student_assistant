@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../features/auth/domain/models/auth_session.dart';
 import 'app_settings_store.dart';
 
 class AppSessionController extends ChangeNotifier {
@@ -10,18 +11,19 @@ class AppSessionController extends ChangeNotifier {
 
   Locale _locale = const Locale('ar');
   bool _hasSeenWelcome = false;
-  bool _isLoggedIn = false;
+  AuthSession? _authSession;
 
   Locale get locale => _locale;
   bool get isArabic => _locale.languageCode == 'ar';
   bool get hasSeenWelcome => _hasSeenWelcome;
-  bool get isLoggedIn => _isLoggedIn;
-  bool get isGuest => !_isLoggedIn;
+  bool get isLoggedIn => _authSession?.isAuthenticated == true;
+  bool get isGuest => !isLoggedIn;
+  AuthSession? get authSession => _authSession;
 
   void initialize() {
     _locale = Locale(_settingsStore.readLanguageCode());
     _hasSeenWelcome = _settingsStore.readHasSeenWelcome();
-    _isLoggedIn = _settingsStore.readIsLoggedIn();
+    _authSession = _settingsStore.readAuthSession();
   }
 
   Future<void> toggleLanguage() async {
@@ -31,25 +33,50 @@ class AppSessionController extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> completeWelcome({bool asGuest = false}) async {
+  Future<void> completeWelcome({
+    bool asGuest = false,
+    AuthSession? session,
+  }) async {
     _hasSeenWelcome = true;
-    _isLoggedIn = !asGuest;
+    _authSession = asGuest ? null : session;
     await _settingsStore.writeHasSeenWelcome(true);
-    await _settingsStore.writeIsLoggedIn(!asGuest);
+    if (asGuest || session == null) {
+      await _settingsStore.clearAuthSession();
+    } else {
+      await _settingsStore.writeAuthSession(session);
+    }
     notifyListeners();
   }
 
-  Future<void> markLoggedIn() async {
-    _isLoggedIn = true;
-    await _settingsStore.writeIsLoggedIn(true);
+  Future<void> markLoggedIn(AuthSession session) async {
+    _authSession = session;
+    await _settingsStore.writeAuthSession(session);
     notifyListeners();
+  }
+
+  Future<void> updateSession(AuthSession session) async {
+    _authSession = session;
+    await _settingsStore.writeAuthSession(session);
+    notifyListeners();
+  }
+
+  Future<void> expireSession() async {
+    await _clearSession(resetWelcome: false);
   }
 
   Future<void> logout() async {
-    _isLoggedIn = false;
-    _hasSeenWelcome = false;
-    await _settingsStore.writeIsLoggedIn(false);
-    await _settingsStore.writeHasSeenWelcome(false);
+    await _clearSession(resetWelcome: true);
+  }
+
+  Future<void> _clearSession({required bool resetWelcome}) async {
+    _authSession = null;
+    if (resetWelcome) {
+      _hasSeenWelcome = false;
+    }
+    await _settingsStore.clearAuthSession();
+    if (resetWelcome) {
+      await _settingsStore.writeHasSeenWelcome(false);
+    }
     notifyListeners();
   }
 }
