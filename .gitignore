@@ -1,4 +1,4 @@
-# Miscellaneous
+json# Miscellaneous
 *.class
 *.log
 *.pyc
@@ -57,8 +57,14 @@ __pycache__/
 # Vector database / embeddings
 chroma/
 chromadb/
-data/
+/backend/data/
 
 # Binary tools
 *.exe
 *.bin
+
+# Temp / Firebase local files
+tmp_*.out
+firebase-debug.log
+firebase-debug.*.log
+backend/functions/.env.local
