@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
 
 import '../../../../app/backend_status_banner.dart';
-import '../../../auth/domain/models/auth_session.dart';
-import '../../data/remote/admin_api_client.dart';
-import '../../domain/models/admin_user.dart';
+import '../../auth/domain/models/auth_session.dart';
+import '../data/remote/admin_api_client.dart';
+import '../domain/models/admin_user.dart';
 
 class AdminPanelPage extends StatefulWidget {
   const AdminPanelPage({
