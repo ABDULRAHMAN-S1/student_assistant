@@ -1,0 +1,128 @@
+{
+  "output_file": "data\\processed\\taibah_regulations.jsonl",
+  "document_count": 10,
+  "chunk_count": 601,
+  "documents": [
+    {
+      "source_file": "taibah_academic_regulations_ar.txt.txt",
+      "detected_title": "لائحة الدراسة والاختبارات للمرحلة الجامعية",
+      "number_of_chunks": 201,
+      "status": "complete",
+      "notes": [
+        "العنوان تم التقاطه من بداية النص.",
+        "لم يتم رصد ضوضاء ملحوظة تتطلب تنظيفًا إضافيًا."
+      ],
+      "doc_type": "regulation"
+    },
+    {
+      "source_file": "taibah_dress_code_ar.txt",
+      "detected_title": "ضوابط الزي الجامعي والمظهر العام لطلبة جامعة طيبة",
+      "number_of_chunks": 22,
+      "status": "partial",
+      "notes": [
+        "العنوان تم التقاطه من بداية النص.",
+        "تم توحيد 2 موضعًا غير واضح إلى [غير واضح في المصدر].",
+        "يوجد 2 مقطعًا بحالة partial."
+      ],
+      "doc_type": "regulation"
+    },
+    {
+      "source_file": "taibah_student_conduct_and_discipline_rules_ar.txt.txt",
+      "detected_title": "قواعد السلوك والانضباط الطلابي",
+      "number_of_chunks": 60,
+      "status": "partial",
+      "notes": [
+        "العنوان تم التقاطه من الحقول التعريفية.",
+        "تم حذف 7 سطرًا مكررًا.",
+        "تم توحيد 17 موضعًا غير واضح إلى [غير واضح في المصدر].",
+        "يوجد 10 مقطعًا بحالة partial."
+      ],
+      "doc_type": "regulation"
+    },
+    {
+      "source_file": "taibah_student_housing_rules_ar.txt",
+      "detected_title": "القواعد المنظمة للإسكان الطلابي بجامعة طيبة",
+      "number_of_chunks": 131,
+      "status": "complete",
+      "notes": [
+        "العنوان تم التقاطه من الحقول التعريفية.",
+        "لم يتم رصد ضوضاء ملحوظة تتطلب تنظيفًا إضافيًا."
+      ],
+      "doc_type": "regulation"
+    },
+    {
+      "source_file": "pharmd_student_guide_ar.txt",
+      "detected_title": "دليل الإرشاد للطالب الجامعي",
+      "doc_type": "guide",
+      "number_of_chunks": 16,
+      "status": "complete",
+      "notes": [
+        "العنوان تم التقاطه من بداية النص.",
+        "تم حذف 14 سطرًا من أرقام الصفحات أو الفواصل."
+      ]
+    },
+    {
+      "source_file": "general_education_elective_courses_policy_cleaned.txt",
+      "detected_title": "دليل ضوابط إنشاء وتسجيل مقررات المتطلبات العامة والمقررات الحرة بجامعة طيبة",
+      "doc_type": "policy",
+      "number_of_chunks": 15,
+      "status": "complete",
+      "notes": [
+        "العنوان تم التقاطه من بداية النص.",
+        "لم يتم رصد ضوضاء ملحوظة تتطلب تنظيفًا إضافيًا."
+      ]
+    },
+    {
+      "source_file": "pharmd_student_guide_ar_cleaned.txt",
+      "detected_title": "دليل الإرشاد للطالب الجامعي",
+      "doc_type": "guide",
+      "number_of_chunks": 106,
+      "source_hash": "184d4e236da7f6dd9de3c21cf7e3d74f71c660624f34ee350e7042adfc9a97f3",
+      "cleaned_hash": "e2beeb99c6a967f42abb92c0a8da5d31505b2c916da61ca82c6d90ccfebc646c",
+      "status": "complete",
+      "notes": [
+        "العنوان تم التقاطه من بداية النص.",
+        "لم يتم رصد ضوضاء ملحوظة تتطلب تنظيفًا إضافيًا."
+      ]
+    },
+    {
+      "source_file": "دليل القبول.txt",
+      "detected_title": "دليل القبول الجامعي",
+      "doc_type": "guide",
+      "number_of_chunks": 3,
+      "source_hash": "4c0475c7ae584e4b9504ab9783810ce0f0b269edb205629e4e56b90c5406ae59",
+      "cleaned_hash": "e5a95c10a00dc8103271f41e4a6319d6b98eda4a541acc5cd8d8e564c7a705ea",
+      "status": "complete",
+      "notes": [
+        "العنوان تم التقاطه من بداية النص.",
+        "لم يتم رصد ضوضاء ملحوظة تتطلب تنظيفًا إضافيًا."
+      ]
+    },
+    {
+      "source_file": "دليل المقرارات العامه.txt",
+      "detected_title": "دليل مقررات المتطلبات العامة بجامعة طيبة",
+      "doc_type": "guide",
+      "number_of_chunks": 35,
+      "source_hash": "a093d60f94523d4f1e6320742e9d946bfbf11f010cd8cb1988cf11a9a8bc6412",
+      "cleaned_hash": "75a185f73f920af1d403cb7f03fd38932346c251bcbdfb3c69dae5eb0a83922c",
+      "status": "complete",
+      "notes": [
+        "العنوان تم التقاطه من بداية النص.",
+        "لم يتم رصد ضوضاء ملحوظة تتطلب تنظيفًا إضافيًا."
+      ]
+    },
+    {
+      "source_file": "دليل شروط و إجراءات الدراسة بنظام الزيارة بجامعة طيبة.txt",
+      "detected_title": "دليل شروط وإجراءات الدراسة بنظام الزيارة بجامعة طيبة",
+      "doc_type": "guide",
+      "number_of_chunks": 12,
+      "source_hash": "02701a5d5728d33b0ca115314d8f25933228819c13f874027cfd8e737a024938",
+      "cleaned_hash": "0bc8fd3125049d8eddb635e26b348a6be0f00b4390a4064e9dd0850f2d813ad8",
+      "status": "complete",
+      "notes": [
+        "العنوان تم التقاطه من بداية النص.",
+        "لم يتم رصد ضوضاء ملحوظة تتطلب تنظيفًا إضافيًا."
+      ]
+    }
+  ]
+}
