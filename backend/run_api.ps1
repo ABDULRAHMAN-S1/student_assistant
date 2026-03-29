@@ -6,7 +6,7 @@ $activateScript = Join-Path $scriptDir 'venv\Scripts\Activate.ps1'
 Push-Location $scriptDir
 try {
     if (-not (Test-Path $activateScript)) {
-        throw "Virtual environment activation script not found at '$activateScript'."
+        throw "Virtual environment activation script not found at '$activateScript'. Create it with 'py -3.13 -m venv venv' from the backend directory."
     }
 
     & $activateScript

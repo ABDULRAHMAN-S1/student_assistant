@@ -231,6 +231,40 @@ class ChatServiceTests(unittest.TestCase):
             [("withdrawal", None, 4)],
         )
 
+    def test_filter_contexts_rejects_unrelated_lecture_recording_contexts(self) -> None:
+        fallback_service = RecordingFallbackService()
+        attendance_context = self.make_context(
+            "ctx-1",
+            "يجوز لمجلس الكلية أو المعهد رفع الحرمان والسماح للطالب بدخول الاختبار النهائي إذا قُبل العذر.",
+        )
+        attendance_context["metadata"]["section"] = "الحضور والحرمان"
+        attendance_context["metadata"]["article"] = "المادة الخامسة عشرة"
+
+        schedule_context = self.make_context(
+            "ctx-2",
+            "تلتزم الكلية بعقد الاختبار النصفي في موعد المحاضرة المعتاد مع إعلان المواعيد عبر النظام.",
+        )
+        schedule_context["metadata"]["section"] = "مواعيد الاختبارات"
+        schedule_context["metadata"]["article"] = "٢-٤"
+
+        route = RouteDecision(
+            mode="lecture_recording",
+            fallback_mode="lecture_recording",
+            uses_fallback_flow=True,
+            retrieval_top_k=8,
+            is_attendance_limit=False,
+        )
+
+        filtered = filter_contexts_for_generation(
+            "هل يسمح بتصوير المحاضرات؟",
+            [attendance_context, schedule_context],
+            "ar",
+            route=route,
+            fallback_service=fallback_service,
+        )
+
+        self.assertEqual(filtered, [])
+
 
 if __name__ == "__main__":
     unittest.main()

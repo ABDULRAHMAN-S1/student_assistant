@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import shutil
 import sys
 from pathlib import Path
 from typing import Any
@@ -155,13 +156,26 @@ def write_build_info(build_info: dict[str, Any]) -> None:
     )
 
 
+def reset_vectordb_directory() -> None:
+    keep_gitkeep = (VECTORDB_DIR / ".gitkeep").exists()
+    if VECTORDB_DIR.exists():
+        shutil.rmtree(VECTORDB_DIR)
+    VECTORDB_DIR.mkdir(parents=True, exist_ok=True)
+    if keep_gitkeep:
+        (VECTORDB_DIR / ".gitkeep").touch()
+
+
 def build_vector_store(rebuild: bool = False, batch_size: int = 32) -> dict[str, Any]:
     chunks = load_chunks()
     if not chunks:
         raise RuntimeError("No chunks found in the processed file.")
     processed_state = build_processed_state_summary(chunks)
 
-    VECTORDB_DIR.mkdir(parents=True, exist_ok=True)
+    if rebuild:
+        reset_vectordb_directory()
+    else:
+        VECTORDB_DIR.mkdir(parents=True, exist_ok=True)
+
     client = chromadb.PersistentClient(
         path=str(VECTORDB_DIR),
         settings=Settings(

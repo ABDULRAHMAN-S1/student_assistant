@@ -81,6 +81,17 @@ The backend lives in:
 backend/
 ```
 
-See `backend/README.md` for API endpoints and backend startup.
+The official backend runtime is `Python 3.13.x`.
+
+For the intended full semantic retrieval path on Windows, create the backend environment with:
+
+```bash
+cd backend
+py -3.13 -m venv venv
+venv\Scripts\activate
+pip install -r requirements.txt
+```
+
+See `backend/README.md` for the backend API, startup flow, and temporary Python 3.14 transition note.
 
 See `RELEASE_CHECKLIST.md` for backend and Flutter deployment requirements.

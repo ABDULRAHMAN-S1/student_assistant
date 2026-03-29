@@ -8,6 +8,7 @@ set "VENV_ACTIVATE=%SCRIPT_DIR%venv\Scripts\activate.bat"
 
 if not exist "%VENV_ACTIVATE%" (
     echo [ERROR] Virtual environment activation script not found at "%VENV_ACTIVATE%".
+    echo [ERROR] Create it with "py -3.13 -m venv venv" from the backend directory.
     popd
     exit /b 1
 )

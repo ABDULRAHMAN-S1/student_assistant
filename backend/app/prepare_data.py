@@ -460,7 +460,6 @@ def is_heading_like_line(line: str) -> bool:
             EXEC_RULE_RE.match(normalized),
             ARTICLE_RE.match(normalized),
             SECTION_RE.match(normalized),
-            CLAUSE_RE.match(normalized),
         )
     ):
         return True

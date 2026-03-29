@@ -7,6 +7,13 @@ This backend serves the Flutter client and answers from the processed regulation
 - `data/processed/taibah_regulations.jsonl`
 - `data/vectordb/`
 
+## Official Python Version
+
+- Official backend runtime: `Python 3.13.x`
+- Official Windows virtual environment path: `backend\venv`
+- Create the backend environment with `py -3.13 -m venv venv`
+- Python 3.14 remains temporary transition support only and runs without the full semantic retrieval stack
+
 ## Runtime Flow
 
 - `app/api.py` -> FastAPI endpoints
@@ -39,22 +46,25 @@ backend/
 
 ## Run The Backend
 
+The official Windows team workflow uses `Python 3.13.x` and a repo-local virtual environment at `backend\venv`.
+
 From the backend folder:
 
 ```bash
 cd backend
-```
-
-If you are using the included virtual environment on Windows:
-
-```bash
+py -3.13 -m venv venv
 venv\Scripts\activate
+python -m pip install --upgrade pip
+pip install -r requirements.txt
 ```
 
-Install dependencies if needed:
+If you already have a `backend\venv` created from Python 3.14, remove it and recreate it with Python 3.13 before reinstalling dependencies.
+
+If you already created `backend\venv`, only activation is required before running backend commands:
 
 ```bash
-pip install -r requirements.txt
+cd backend
+venv\Scripts\activate
 ```
 
 Create deployment configuration from the provided template before production:
@@ -71,11 +81,19 @@ python start_backend_windows.py
 
 This launcher keeps `stdout` and `stderr` attached to real log files under `data/logs/`, which avoids fragile detached-console behavior on Windows during lazy model loading.
 
+The included launcher scripts assume `backend\venv` was created with `py -3.13 -m venv venv`:
+
+```bash
+.\run_api.ps1
+```
+
 If you want to run it manually in an active terminal, this still works:
 
 ```bash
 uvicorn app.api:app --host 0.0.0.0 --port 8000 --reload
 ```
+
+Python 3.14 remains useful only as a temporary transition fallback. On 3.14 the backend skips `torch` and `sentence-transformers`, so full semantic retrieval is not available.
 
 ## Authentication
 

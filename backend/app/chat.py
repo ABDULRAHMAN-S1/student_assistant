@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import re
 import sys
 from dataclasses import dataclass
@@ -22,6 +23,7 @@ try:
         clean_display_section,
         detect_language,
         get_chunk_records,
+        infer_record_flags,
         is_code_style_query,
         light_stem,
         normalize_for_matching,
@@ -45,6 +47,7 @@ except ImportError:
         clean_display_section,
         detect_language,
         get_chunk_records,
+        infer_record_flags,
         is_code_style_query,
         light_stem,
         normalize_for_matching,
@@ -135,6 +138,17 @@ LIST_ITEM_PATTERN = re.compile(
     r"^(?:[-•▪]|[\d٠-٩]+(?:\s*[-–]\s*[\d٠-٩]+)?[\.\):：،-]?|[أ-ي][\.\):：،-])\s*"
 )
 STATUS_CODE_LINE_PATTERN = re.compile(r"\s*=\s*")
+STRICT_ROUTE_MODES = {
+    "attendance_penalty",
+    "housing_conditions",
+    "lecture_recording",
+    "missed_final",
+    "penalty",
+    "withdrawal",
+}
+
+
+logger = logging.getLogger(__name__)
 
 
 fallback_service = FallbackService()
@@ -159,6 +173,147 @@ class RouteDecision:
             retrieval_top_k=retrieval_top_k,
             is_attendance_limit=is_attendance_limit,
         )
+
+
+def mode_requires_strict_context_match(mode: str) -> bool:
+    return mode in STRICT_ROUTE_MODES
+
+
+def context_matches_route_mode(context: dict[str, Any], mode: str) -> bool:
+    if not mode_requires_strict_context_match(mode):
+        return True
+
+    haystack = context_search_text(context)
+    record_flags = infer_record_flags(context)
+
+    if mode == "lecture_recording":
+        has_recording_action = any(term in haystack for term in ("تصوير", "تسجيل"))
+        has_lecture_anchor = any(term in haystack for term in ("محاضر", "محاضره", "محاضرات"))
+        has_permission_anchor = any(term in haystack for term in ("موافقه", "الخطيه", "قبل اخذ"))
+        return record_flags["lecture_recording"] or (
+            has_recording_action and has_lecture_anchor and has_permission_anchor
+        )
+
+    if mode == "withdrawal":
+        return record_flags["withdrawal"] or any(
+            term in haystack
+            for term in (
+                "الانسحاب من مقرر",
+                "الانسحاب من المقرر",
+                "يجوز للطالب الانسحاب",
+                "طلب الانسحاب",
+            )
+        )
+
+    if mode == "missed_final":
+        return record_flags["missed_final"] or (
+            any(term in haystack for term in ("الاختبار النهايي", "الاختبار النهائي", "اختبار بديل"))
+            and any(term in haystack for term in ("غاب", "غايب", "يغيب", "صفر", "صفرا", "عذر"))
+        )
+
+    if mode == "penalty":
+        return ("غش" in haystack) and any(
+            term in haystack
+            for term in (
+                "عقوب",
+                "الماده الثامنه",
+                "المادة الثامنة",
+                "راسب",
+                "فصل",
+                "حرمان",
+            )
+        )
+
+    if mode == "housing_conditions":
+        has_housing_anchor = record_flags["housing"] or any(
+            term in haystack for term in ("السكن", "الاسكان", "الاسكان الطلابي")
+        )
+        return has_housing_anchor and any(term in haystack for term in ("شروط", "قبول"))
+
+    if mode == "attendance_penalty":
+        return (
+            record_flags["attendance"]
+            and any(term in haystack for term in ("حرمان", "الحضور", "الاختبار النهائي"))
+            and not any(term in haystack for term in ("غش", "انسحاب", "سكن", "اسكان"))
+        )
+
+    return True
+
+
+def filter_contexts_by_route_mode(contexts: list[dict[str, Any]], mode: str) -> list[dict[str, Any]]:
+    if not mode_requires_strict_context_match(mode):
+        return contexts[:]
+    return [context for context in contexts if context_matches_route_mode(context, mode)]
+
+
+def build_context_diagnostic_entry(context: dict[str, Any], *, route_mode: str | None = None) -> dict[str, Any]:
+    metadata = context.get("metadata", {})
+    preview = re.sub(r"\s+", " ", str(context.get("content", ""))).strip()
+    entry = {
+        "id": context.get("id", ""),
+        "score": round(float(context.get("score", 0.0)), 4),
+        "lexical_score": round(float(context.get("lexical_score", 0.0)), 4),
+        "semantic_score": round(float(context.get("semantic_score", 0.0)), 4),
+        "document_title": metadata.get("document_title", ""),
+        "article": metadata.get("article", ""),
+        "section": metadata.get("section", ""),
+        "content_preview": truncate_text(preview, 180),
+    }
+    if route_mode is not None and mode_requires_strict_context_match(route_mode):
+        entry["mode_match"] = context_matches_route_mode(context, route_mode)
+    return entry
+
+
+def emit_chat_diagnostics(
+    *,
+    stage: str,
+    original_question: str,
+    working_question: str,
+    normalized_query: str,
+    language: str,
+    route: RouteDecision,
+    retrieved_contexts: list[dict[str, Any]] | None = None,
+    filtered_contexts: list[dict[str, Any]] | None = None,
+    source_contexts: list[dict[str, Any]] | None = None,
+    fallback_reason: str | None = None,
+    answer: str | None = None,
+) -> None:
+    payload: dict[str, Any] = {
+        "stage": stage,
+        "original_question": original_question,
+        "working_question": working_question,
+        "normalized_query": normalized_query,
+        "language": language,
+        "route": {
+            "mode": route.mode,
+            "fallback_mode": route.fallback_mode,
+            "uses_fallback_flow": route.uses_fallback_flow,
+            "retrieval_top_k": route.retrieval_top_k,
+            "is_attendance_limit": route.is_attendance_limit,
+        },
+    }
+
+    if retrieved_contexts is not None:
+        payload["retrieved_contexts"] = [
+            build_context_diagnostic_entry(context, route_mode=route.mode)
+            for context in retrieved_contexts[:6]
+        ]
+    if filtered_contexts is not None:
+        payload["filtered_contexts"] = [
+            build_context_diagnostic_entry(context, route_mode=route.mode)
+            for context in filtered_contexts[:6]
+        ]
+    if source_contexts is not None:
+        payload["final_citations"] = [
+            build_context_diagnostic_entry(context, route_mode=route.mode)
+            for context in source_contexts[:6]
+        ]
+    if fallback_reason:
+        payload["fallback_reason"] = fallback_reason
+    if answer:
+        payload["answer_preview"] = truncate_text(answer, 240)
+
+    logger.info("chat_diagnostics %s", json.dumps(payload, ensure_ascii=False))
 
 
 def _formatter_context() -> FormatterRuntimeContext:
@@ -1256,6 +1411,10 @@ def passes_relevance_gate(
     if top_score < MIN_ARABIC_TOP_SCORE:
         return False
 
+    mode = detect_answer_mode(question, language)
+    if mode_requires_strict_context_match(mode) and not context_matches_route_mode(context, mode):
+        return False
+
     if details["phrase_matches"] > 0:
         return True
 
@@ -1344,6 +1503,11 @@ def filter_contexts_for_generation(
     asks_upper_limit_fn = fallback_service.asks_upper_limit
     asks_lower_limit_fn = fallback_service.asks_lower_limit
     mode = route.mode
+    if language == "ar" and mode_requires_strict_context_match(mode):
+        contexts = filter_contexts_by_route_mode(contexts, mode)
+        if not contexts:
+            return []
+
     if language == "ar":
         if mode == "missed_final":
             mode_contexts = rank_contexts_by_terms(
@@ -3559,7 +3723,21 @@ class ChatService:
         if is_status_code_query(original_question) or is_status_code_query(working_question):
             language = "ar"
         route = self.route_question(working_question, language, top_k=top_k)
+        normalized_query = (
+            build_query_profile(working_question)["normalized_query"]
+            if language == "ar"
+            else normalize_for_matching(working_question)
+        )
         contexts = self.search_fn(working_question, top_k=route.retrieval_top_k)
+        emit_chat_diagnostics(
+            stage="retrieval",
+            original_question=original_question,
+            working_question=working_question,
+            normalized_query=normalized_query,
+            language=language,
+            route=route,
+            retrieved_contexts=contexts,
+        )
         filtered_contexts = self.filter_contexts_fn(
             working_question,
             contexts,
@@ -3570,6 +3748,19 @@ class ChatService:
 
         if not filtered_contexts:
             answer = FALLBACK_AR if language == "ar" else FALLBACK_EN
+            fallback_reason = "no_retrieval_results" if not contexts else "no_mode_aligned_contexts" if mode_requires_strict_context_match(route.mode) else "no_contexts_after_filtering"
+            emit_chat_diagnostics(
+                stage="fallback",
+                original_question=original_question,
+                working_question=working_question,
+                normalized_query=normalized_query,
+                language=language,
+                route=route,
+                retrieved_contexts=contexts,
+                filtered_contexts=[],
+                fallback_reason=fallback_reason,
+                answer=answer,
+            )
             return self.formatter.build_response(original_question, language, answer, [])
 
         direct_arabic_answer, used_contexts, unclear = self.compose_arabic_response_fn(working_question, filtered_contexts)
@@ -3606,6 +3797,20 @@ class ChatService:
             source_contexts,
             language,
             context=formatter_context,
+        )
+
+        emit_chat_diagnostics(
+            stage="answer",
+            original_question=original_question,
+            working_question=working_question,
+            normalized_query=normalized_query,
+            language=language,
+            route=route,
+            retrieved_contexts=contexts,
+            filtered_contexts=filtered_contexts,
+            source_contexts=source_contexts,
+            fallback_reason="insufficient_grounded_support" if direct_arabic_answer == FALLBACK_AR else None,
+            answer=answer,
         )
 
         return self.formatter.build_response(original_question, language, answer, sources)

@@ -4,6 +4,7 @@ import argparse
 import contextlib
 import hashlib
 import json
+import logging
 import os
 import re
 import sys
@@ -14,7 +15,14 @@ from typing import Any
 
 import chromadb
 from chromadb.config import Settings
-from sentence_transformers import SentenceTransformer
+
+try:
+    from sentence_transformers import SentenceTransformer
+except ImportError:  # pragma: no cover
+    SentenceTransformer = None  # type: ignore[assignment]
+
+
+logger = logging.getLogger(__name__)
 
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -995,7 +1003,12 @@ def lexical_match_score(record: dict[str, Any], query_profile: dict[str, Any]) -
 
 
 @lru_cache(maxsize=1)
-def get_embedding_model() -> SentenceTransformer:
+def get_embedding_model() -> Any:
+    if SentenceTransformer is None:
+        raise RuntimeError(
+            "sentence-transformers is not installed. Use Python 3.13 or earlier to enable semantic search."
+        )
+
     os.environ.setdefault("HF_HUB_DISABLE_PROGRESS_BARS", "1")
     os.environ.setdefault("TRANSFORMERS_VERBOSITY", "error")
     os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
@@ -1047,15 +1060,64 @@ def semantic_search(query: str, top_k: int = 4) -> list[dict[str, Any]]:
     if not raw_query:
         return []
 
-    collection = get_collection()
-    model = get_embedding_model()
+    try:
+        collection = get_collection()
+        model = get_embedding_model()
+    except RuntimeError:
+        return []
+    except Exception as exc:
+        _collection_cache["token"] = None
+        _collection_cache["collection"] = None
+        get_chroma_client.cache_clear()
+        logger.warning(
+            "Semantic retrieval is unavailable; falling back to lexical search. "
+            "Rebuild backend/data/vectordb to restore semantic search.",
+            exc_info=exc,
+        )
+        return []
+    except BaseException as exc:
+        if exc.__class__.__name__ != "PanicException":
+            raise
+        _collection_cache["token"] = None
+        _collection_cache["collection"] = None
+        get_chroma_client.cache_clear()
+        logger.warning(
+            "Semantic retrieval panicked; falling back to lexical search. "
+            "Rebuild backend/data/vectordb to restore semantic search.",
+            exc_info=exc,
+        )
+        return []
+
     normalized_query = normalize_query(raw_query)
     query_embedding = model.encode(normalized_query, normalize_embeddings=True).tolist()
 
-    results = collection.query(
-        query_embeddings=[query_embedding],
-        n_results=max(1, top_k),
-    )
+    try:
+        results = collection.query(
+            query_embeddings=[query_embedding],
+            n_results=max(1, top_k),
+        )
+    except Exception as exc:
+        _collection_cache["token"] = None
+        _collection_cache["collection"] = None
+        get_chroma_client.cache_clear()
+        logger.warning(
+            "Semantic query failed; falling back to lexical search. "
+            "Rebuild backend/data/vectordb to restore semantic search.",
+            exc_info=exc,
+        )
+        return []
+    except BaseException as exc:
+        if exc.__class__.__name__ != "PanicException":
+            raise
+        _collection_cache["token"] = None
+        _collection_cache["collection"] = None
+        get_chroma_client.cache_clear()
+        logger.warning(
+            "Semantic query panicked; falling back to lexical search. "
+            "Rebuild backend/data/vectordb to restore semantic search.",
+            exc_info=exc,
+        )
+        return []
 
     ids = results.get("ids", [[]])[0]
     documents = results.get("documents", [[]])[0]
@@ -1168,7 +1230,7 @@ def search(query: str, top_k: int = 4) -> list[dict[str, Any]]:
     code_style_query = is_code_style_query(query_profile, code_tokens)
     semantic_matches = semantic_search(raw_query, top_k=candidate_limit)
     language = detect_language(raw_query)
-    if language != "ar" and not code_tokens:
+    if language != "ar" and not code_tokens and semantic_matches:
         for match in semantic_matches:
             match["semantic_score"] = match["score"]
             match["lexical_score"] = 0.0
@@ -1320,14 +1382,29 @@ def search(query: str, top_k: int = 4) -> list[dict[str, Any]]:
                 if lexical_score < 0.55 and semantic_score < 0.82:
                     continue
         if query_flags["lecture_recording"]:
+            has_recording_action = any(term in searchable_text for term in ("تصوير", "تسجيل"))
+            has_lecture_anchor = any(term in searchable_text for term in ("محاضر", "محاضره", "محاضرات"))
+            has_permission_anchor = any(
+                term in searchable_text for term in ("موافقه", "الخطيه", "قبل اخذ", "محاوله التسجيل", "محاوله التصوير")
+            )
             if record_flags["lecture_recording"]:
-                score += 0.24
+                score += 0.42
                 if "قبل اخذ موافقه المحاضر الخطيه" in searchable_text:
-                    score += 0.16
+                    score += 0.24
                 if "قواعد السلوك والانضباط الطلابي" in searchable_text:
-                    score += 0.08
-            elif lexical_score < 0.5 and semantic_score < 0.78:
-                score -= 0.28
+                    score += 0.14
+                if "الماده الخامسه" in searchable_text or "المادة الخامسة" in searchable_text:
+                    score += 0.12
+            elif has_recording_action and has_lecture_anchor:
+                score -= 0.14
+                if not has_permission_anchor:
+                    score -= 0.18
+                    if lexical_score < 0.62 and semantic_score < 0.84:
+                        continue
+            else:
+                score -= 0.42
+                if lexical_score < 0.7 and semantic_score < 0.84:
+                    continue
         if record_flags["dress"] and not query_flags["dress"] and lexical_score < 0.55:
             score -= 0.16
         if query_flags["attendance"] and not query_flags["missed_final"]:
@@ -1415,7 +1492,28 @@ def search(query: str, top_k: int = 4) -> list[dict[str, Any]]:
 
     ranked.sort(key=lambda item: final_result_sort_key(item, prefer_housing=query_flags["housing"]))
     strong_ranked = [item for item in ranked if not should_exclude_from_top_results(item)]
-    final_ranked = strong_ranked if strong_ranked else ranked
+    if query_flags["lecture_recording"]:
+        explicit_recording_ranked = [
+            item
+            for item in ranked
+            if float(item.get("lexical_score", 0.0)) >= 0.65
+            and float(item.get("_match_ratio", 0.0)) >= 0.5
+            and float(item.get("_phrase_ratio", 0.0)) > 0.0
+            and any(
+                term in normalize_for_matching(item.get("content", ""))
+                for term in ("تسجيل او تصوير المحاضرات", "تصوير المحاضرات", "موافقه المحاضر")
+            )
+        ]
+        if explicit_recording_ranked:
+            prioritized_ids = {item["id"] for item in explicit_recording_ranked}
+            final_ranked = explicit_recording_ranked + [
+                item for item in strong_ranked if item["id"] not in prioritized_ids
+            ]
+        else:
+            final_ranked = strong_ranked if strong_ranked else ranked
+    else:
+        final_ranked = strong_ranked if strong_ranked else ranked
+
     cleaned_ranked = []
     for item in final_ranked[:top_k]:
         cleaned_item = dict(item)
