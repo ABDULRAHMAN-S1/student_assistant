@@ -36,5 +36,7 @@
   // ===== UI Cleanliness =====
   "workbench.iconTheme": "material-icon-theme",
   "editor.minimap.enabled": false,
-  "python-envs.defaultEnvManager": "ms-python.python:system"
+  "python.defaultInterpreterPath": "${workspaceFolder}/backend/venv/Scripts/python.exe",
+  "python-envs.defaultEnvManager": "ms-python.python:system",
+  "cmake.sourceDirectory": "D:/student_assistant/linux"
 }

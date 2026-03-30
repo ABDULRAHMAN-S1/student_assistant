@@ -1,6 +1,0 @@
-chromadb
-deep-translator
-fastapi
-sentence-transformers
-torch
-uvicorn

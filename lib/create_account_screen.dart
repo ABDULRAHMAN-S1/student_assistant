@@ -1,13 +1,22 @@
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 
+import 'app/backend_status_banner.dart';
+import 'app/backend_status_controller.dart';
+import 'features/auth/data/remote/auth_api_client.dart';
+import 'features/auth/domain/models/auth_session.dart';
+import 'features/auth/presentation/auth_error_messages.dart';
+import 'features/profile/data/demo/demo_profile_repository.dart';
+import 'features/profile/data/local/profile_store.dart';
+import 'features/profile/domain/models/academic_context.dart';
+import 'features/profile/domain/models/student_profile.dart';
 import 'login_page.dart';
 
 class CreateAccountScreen extends StatefulWidget {
   final bool isArabic;
-  final VoidCallback? onRegisterSuccess;
+  final Future<void> Function(AuthSession session)? onRegisterSuccess;
   final VoidCallback? onToggleLanguage;
-  final void Function({bool asGuest})? onDone;
+  final Future<void> Function({bool asGuest, AuthSession? sessionData})? onDone;
 
   const CreateAccountScreen({
     super.key,
@@ -23,6 +32,7 @@ class CreateAccountScreen extends StatefulWidget {
 
 class _CreateAccountScreenState extends State<CreateAccountScreen> {
   final _formKey = GlobalKey<FormState>();
+  final AuthApiClient _authApiClient = const AuthApiClient();
   final _nameController = TextEditingController();
   final _emailController = TextEditingController();
   final _phoneController = TextEditingController();
@@ -33,6 +43,7 @@ class _CreateAccountScreenState extends State<CreateAccountScreen> {
   bool _obscurePassword = true;
   bool _obscureConfirmPassword = true;
   bool _agreedToTerms = false;
+  bool _isSubmitting = false;
   String? _selectedAcademicLevel;
   final Set<String> _selectedInterests = {};
 
@@ -105,24 +116,6 @@ class _CreateAccountScreenState extends State<CreateAccountScreen> {
     setState(() => _agreedToTerms = value ?? false);
   }
 
-  void _showSuccessDialog() {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Text(_getText('تم بنجاح!', 'Success!')),
-        content: Text(
-          _getText('تم إنشاء حسابك بنجاح', 'Account created successfully'),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: Text(_getText('حسناً', 'OK')),
-          ),
-        ],
-      ),
-    );
-  }
-
   void _showErrorSnackBar(String message) {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
@@ -133,7 +126,47 @@ class _CreateAccountScreenState extends State<CreateAccountScreen> {
     );
   }
 
-  void _submitForm() {
+  bool _shouldRefreshBackendIndicator(AuthApiException error) {
+    return error.kind == AuthApiErrorKind.network ||
+        error.kind == AuthApiErrorKind.timeout ||
+        error.kind == AuthApiErrorKind.invalidResponse;
+  }
+
+  bool get _isBackendOffline =>
+      BackendStatusController.instance.snapshot.isOffline;
+
+  String get _backendUnavailableMessage => _getText(
+    'الخادم غير متاح حالياً. شغّل الـ backend المحلي ثم حدّث الحالة من الأعلى.',
+    'The backend is currently unavailable. Start the local backend, then refresh the status above.',
+  );
+
+  StudentProfile _buildStudentProfile() {
+    final now = DateTime.now();
+    final academicContext = AcademicContext(
+      specialization: _specializationController.text.trim(),
+      academicLevel: _selectedAcademicLevel,
+      interests: _selectedInterests.toList(growable: false),
+    );
+
+    return StudentProfile(
+      id: _emailController.text.trim().toLowerCase(),
+      fullName: _nameController.text.trim(),
+      email: _emailController.text.trim(),
+      phoneNumber: _phoneController.text.trim(),
+      preferredLanguageCode: widget.isArabic ? 'ar' : 'en',
+      createdAt: now,
+      updatedAt: now,
+      academicContext: academicContext,
+    );
+  }
+
+  Future<void> _persistStudentProfile() async {
+    final profileStore = await ProfileStore.open();
+    final profileRepository = DemoProfileRepository(profileStore: profileStore);
+    await profileRepository.saveProfile(_buildStudentProfile());
+  }
+
+  Future<void> _submitForm() async {
     if (!_formKey.currentState!.validate()) return;
 
     if (!_agreedToTerms) {
@@ -146,20 +179,53 @@ class _CreateAccountScreenState extends State<CreateAccountScreen> {
       return;
     }
 
-    final formData = {
-      'fullName': _nameController.text.trim(),
-      'email': _emailController.text.trim(),
-      'phone': _phoneController.text.trim(),
-      'password': _passwordController.text,
-      'specialization': _specializationController.text.trim(),
-      'academicLevel': _selectedAcademicLevel,
-      'interests': _selectedInterests.toList(),
-    };
+    if (_isBackendOffline) {
+      _showErrorSnackBar(_backendUnavailableMessage);
+      return;
+    }
 
-    debugPrint('Form Data: $formData');
-
-    widget.onRegisterSuccess?.call();
-    _showSuccessDialog();
+    setState(() => _isSubmitting = true);
+    try {
+      final session = await _authApiClient.register(
+        email: _emailController.text.trim(),
+        password: _passwordController.text,
+        fullName: _nameController.text.trim(),
+      );
+      await _persistStudentProfile();
+      await widget.onRegisterSuccess?.call(session);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _getText('تم إنشاء الحساب بنجاح', 'Account created successfully'),
+          ),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+      Navigator.of(context).popUntil((route) => route.isFirst);
+    } on AuthApiException catch (error) {
+      if (_shouldRefreshBackendIndicator(error)) {
+        BackendStatusController.instance.refresh(showCheckingState: false);
+      }
+      _showErrorSnackBar(
+        localizeAuthError(
+          error,
+          isArabic: widget.isArabic,
+          isRegistration: true,
+        ),
+      );
+    } catch (_) {
+      _showErrorSnackBar(
+        localizeUnexpectedAuthError(
+          isArabic: widget.isArabic,
+          isRegistration: true,
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _isSubmitting = false);
+      }
+    }
   }
 
   String _getText(String arabic, String english) =>
@@ -335,6 +401,11 @@ class _CreateAccountScreenState extends State<CreateAccountScreen> {
                 textAlign: TextAlign.center,
                 style: const TextStyle(color: Colors.white70, fontSize: 14),
               ),
+              const SizedBox(height: 16),
+              BackendStatusBanner(
+                isArabic: widget.isArabic,
+                forDarkBackground: true,
+              ),
             ],
           ),
         ),
@@ -471,47 +542,81 @@ class _CreateAccountScreenState extends State<CreateAccountScreen> {
   }
 
   Widget _buildSubmitButton() {
-    return Container(
-      width: double.infinity,
-      height: 56,
-      decoration: BoxDecoration(
-        gradient: const LinearGradient(
-          colors: [_lightPurple, _primaryPurple, _darkPurple],
-        ),
-        borderRadius: BorderRadius.circular(12),
-        boxShadow: [
-          BoxShadow(
-            color: _primaryPurple.withValues(alpha: 0.3),
-            blurRadius: 8,
-            offset: const Offset(0, 4),
-          ),
-        ],
-      ),
-      child: ElevatedButton(
-        onPressed: _submitForm,
-        style: ElevatedButton.styleFrom(
-          backgroundColor: Colors.transparent,
-          shadowColor: Colors.transparent,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(12),
-          ),
-        ),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.center,
+    return AnimatedBuilder(
+      animation: BackendStatusController.instance,
+      builder: (context, _) {
+        final isBackendOffline =
+            BackendStatusController.instance.snapshot.isOffline;
+        final canSubmit = !_isSubmitting && !isBackendOffline;
+        final gradientColors = isBackendOffline
+            ? const [Color(0xFFE2E8F0), Color(0xFFCBD5E1), Color(0xFF94A3B8)]
+            : const [_lightPurple, _primaryPurple, _darkPurple];
+
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            const Icon(Icons.person_add, color: Colors.white),
-            const SizedBox(width: 8),
-            Text(
-              _getText('إنشاء الحساب', 'Create Account'),
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 18,
-                fontWeight: FontWeight.bold,
+            Container(
+              width: double.infinity,
+              height: 56,
+              decoration: BoxDecoration(
+                gradient: LinearGradient(colors: gradientColors),
+                borderRadius: BorderRadius.circular(12),
+                boxShadow: [
+                  BoxShadow(
+                    color: (isBackendOffline ? Colors.grey : _primaryPurple)
+                        .withValues(alpha: 0.22),
+                    blurRadius: 8,
+                    offset: const Offset(0, 4),
+                  ),
+                ],
+              ),
+              child: ElevatedButton(
+                onPressed: canSubmit ? _submitForm : null,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.transparent,
+                  shadowColor: Colors.transparent,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    const Icon(Icons.person_add, color: Colors.white),
+                    const SizedBox(width: 8),
+                    Text(
+                      _isSubmitting
+                          ? _getText(
+                              'جارٍ إنشاء الحساب...',
+                              'Creating account...',
+                            )
+                          : _getText('إنشاء الحساب', 'Create Account'),
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ),
+            if (isBackendOffline) ...[
+              const SizedBox(height: 8),
+              Text(
+                _backendUnavailableMessage,
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                  color: Color(0xFF7F1D1D),
+                  fontSize: 12.5,
+                  fontWeight: FontWeight.w600,
+                  height: 1.4,
+                ),
+              ),
+            ],
           ],
-        ),
-      ),
+        );
+      },
     );
   }
 
@@ -665,10 +770,10 @@ class _CreateAccountScreenState extends State<CreateAccountScreen> {
                               isObscured: _obscurePassword,
                               onToggleVisibility: _togglePasswordVisibility,
                               validator: (value) =>
-                                  value != null && value.length < 6
+                                  value != null && value.length < 10
                                   ? _getText(
-                                      'كلمة السر قصيرة جداً',
-                                      'Password too short',
+                                      'كلمة السر يجب أن تكون 10 أحرف على الأقل',
+                                      'Password must be at least 10 characters',
                                     )
                                   : null,
                             ),

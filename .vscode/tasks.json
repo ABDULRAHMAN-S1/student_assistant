@@ -1,0 +1,85 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "flutter-tests-secure",
+      "type": "shell",
+      "command": "flutter",
+      "args": ["test", "test/ai_chat_page_test.dart", "test/widget_test.dart"],
+      "isBackground": false,
+      "group": "test"
+    },
+    {
+      "label": "backend-unittest-security",
+      "type": "shell",
+      "command": "${workspaceFolder}\\backend\\venv\\Scripts\\python.exe",
+      "args": [
+        "-m",
+        "unittest",
+        "discover",
+        "-s",
+        "backend/tests",
+        "-p",
+        "test_api_security.py",
+        "-v"
+      ],
+      "isBackground": false,
+      "group": "test"
+    },
+    {
+      "label": "backend-unittest-security-fixed",
+      "type": "shell",
+      "command": "${workspaceFolder}\\backend\\venv\\Scripts\\python.exe",
+      "args": [
+        "-m",
+        "unittest",
+        "discover",
+        "-s",
+        "backend/tests",
+        "-p",
+        "test_api_security.py",
+        "-v"
+      ],
+      "isBackground": false,
+      "group": "test"
+    },
+    {
+      "label": "flutter-widget-only",
+      "type": "shell",
+      "command": "flutter",
+      "args": ["test", "test/widget_test.dart", "-r", "expanded"],
+      "isBackground": false,
+      "group": "test"
+    },
+    {
+      "label": "flutter-chat-history-test",
+      "type": "shell",
+      "command": "flutter",
+      "args": ["test", "test/ai_chat_page_test.dart", "-r", "expanded"],
+      "isBackground": false,
+      "group": "test"
+    },
+    {
+      "label": "flutter-widget-smoke-test",
+      "type": "shell",
+      "command": "flutter",
+      "args": ["test", "test/widget_test.dart", "-r", "expanded"],
+      "isBackground": false,
+      "group": "test"
+    },
+    {
+      "label": "flutter-focused-tests-final",
+      "type": "shell",
+      "command": "flutter",
+      "args": [
+        "test",
+        "test/ai_chat_page_test.dart",
+        "test/widget_test.dart",
+        "-r",
+        "expanded"
+      ],
+      "isBackground": false,
+      "group": "test"
+    }
+  ]
+}

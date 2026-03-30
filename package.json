@@ -1,5 +1,4 @@
 {
-  "dependencies": {
-    "openai": "^6.22.0"
-  }
+  "name": "student_assistant-root",
+  "private": true
 }
