@@ -1,7 +1,6 @@
-json# Miscellaneous
+# Miscellaneous
 *.class
 *.log
-*.pyc
 *.swp
 .DS_Store
 .atom/
@@ -18,12 +17,10 @@ migrate_working_dir/
 *.iws
 .idea/
 
-# The .vscode folder contains launch configuration and tasks you configure in
-# VS Code which you may wish to be included in version control, so this line
-# is commented out by default.
+# VS Code
 #.vscode/
 
-# Flutter/Dart/Pub related
+# Flutter / Dart / Pub
 **/doc/api/
 **/ios/Flutter/.last_build_id
 .dart_tool/
@@ -33,38 +30,45 @@ migrate_working_dir/
 /build/
 /coverage/
 
+# Android / Gradle / Kotlin local caches
+.gradle/
+.kotlin/
+
 # Symbolication related
 app.*.symbols
 
 # Obfuscation related
 app.*.map.json
 
-# Android Studio will place build artifacts here
+# Android build outputs
 /android/app/debug
 /android/app/profile
 /android/app/release
+
 # Python
-venv/
+venv*/
+.venv/
 __pycache__/
 *.py[cod]
 
 # Environment variables
 .env
+backend/functions/.env.local
 
-# Databases
+# Local database
+app.db
 *.sqlite3
+!backend/data/vectordb/chroma.sqlite3
 
-# Vector database / embeddings
-chroma/
-chromadb/
-/backend/data/
+# Runtime / generated backend data
+backend/data/logs/
+backend/data/feedback/
+backend/data/output/
 
-# Binary tools
-*.exe
-*.bin
+# Optional vector build metadata
+backend/data/vectordb/build_info.json
 
 # Temp / Firebase local files
 tmp_*.out
 firebase-debug.log
 firebase-debug.*.log
-backend/functions/.env.local
