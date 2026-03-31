@@ -27,11 +27,10 @@ dev_dependencies:
 flutter_launcher_icons:
   android: true
   ios: true
-  image_path: "assets/icon.png"
+  image_path: "web/favicon.png"
   remove_alpha_ios: true
 
 flutter:
   uses-material-design: true
   assets:
     - assets/taibah_logo.png
-    - assets/icon.png
