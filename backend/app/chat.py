@@ -1418,6 +1418,21 @@ def passes_relevance_gate(
     if details["phrase_matches"] > 0:
         return True
 
+    # Broad general questions can be grounded by strong semantic matches even
+    # when lexical overlap is low, such as asking generally about university regulations.
+    if (
+        mode == "general"
+        and not query_profile["important_stems"]
+        and len(query_profile["tokens"]) >= 2
+        and details["semantic_score"] >= 0.7
+        and (
+            details["token_matches"] > 0
+            or details["metadata_hits"] > 0
+            or details["stem_matches"] > 0
+        )
+    ):
+        return True
+
     if query_profile["important_stems"]:
         if details["important_matches"] <= 0:
             return False

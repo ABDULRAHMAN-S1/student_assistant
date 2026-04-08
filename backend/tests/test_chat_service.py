@@ -11,8 +11,9 @@ if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
 
-from app.chat import ChatService, RouteDecision, filter_contexts_for_generation
+from app.chat import FALLBACK_AR, ChatService, RouteDecision, filter_contexts_for_generation
 from app.retrieve import normalize_for_matching
+from app.services.answer_formatter import AnswerFormatterService
 
 
 class RecordingRouter:
@@ -264,6 +265,74 @@ class ChatServiceTests(unittest.TestCase):
         )
 
         self.assertEqual(filtered, [])
+
+    def test_filter_contexts_keeps_broad_general_context_with_strong_semantic_support(self) -> None:
+        fallback_service = RecordingFallbackService()
+        general_context = {
+            "id": "ctx-general-1",
+            "metadata": {
+                "doc_type": "regulation",
+                "document_title": "لائحة الدراسة والاختبارات للمرحلة الجامعية",
+                "section": "الفصل الحادي عشر: أحكام عامة",
+                "article": "المادة التاسعة والأربعون",
+                "title": "المادة التاسعة والأربعون",
+            },
+            "score": 0.9182,
+            "lexical_score": 0.0,
+            "semantic_score": 0.7982,
+            "content": "مع مراعاة ما يصدر من الجهات المختصة، للجامعة إتاحة الفرصة لطلاب المرحلة الثانوية وفق ما تنص عليه اللائحة المعتمدة.",
+        }
+        route = RouteDecision(
+            mode="general",
+            fallback_mode=None,
+            uses_fallback_flow=False,
+            retrieval_top_k=8,
+            is_attendance_limit=False,
+        )
+
+        filtered = filter_contexts_for_generation(
+            "ما هي لوائح الجامعة؟",
+            [general_context],
+            "ar",
+            route=route,
+            fallback_service=fallback_service,
+        )
+
+        self.assertEqual([context["id"] for context in filtered], ["ctx-general-1"])
+
+    def test_answer_question_keeps_general_semantic_context_out_of_fallback(self) -> None:
+        router = RecordingRouter({"mode": "general", "fallback_mode": None, "uses_fallback_flow": False})
+        fallback_service = RecordingFallbackService()
+        formatter = AnswerFormatterService()
+        general_context = {
+            "id": "ctx-general-live-1",
+            "metadata": {
+                "doc_type": "regulation",
+                "document_title": "لائحة الدراسة والاختبارات للمرحلة الجامعية",
+                "section": "الفصل الحادي عشر: أحكام عامة",
+                "article": "المادة التاسعة والأربعون",
+                "title": "المادة التاسعة والأربعون",
+                "status": "complete",
+            },
+            "score": 0.9182,
+            "lexical_score": 0.0,
+            "semantic_score": 0.7982,
+            "content": "هذه اللائحة تنظم الدراسة والاختبارات في الجامعة، وتحدد الأحكام العامة والإجراءات الأكاديمية المعتمدة للطلاب والبرامج الدراسية.",
+        }
+        service = ChatService(
+            router=router,
+            fallback_service=fallback_service,
+            formatter=formatter,
+            search_fn=lambda query, top_k: [general_context],
+            detect_language_fn=lambda question: "ar",
+            rewrite_query_fn=lambda question: question,
+        )
+
+        response = service.answer_question("ما هي لوائح الجامعة؟", top_k=4)
+
+        self.assertNotEqual(response["answer"], FALLBACK_AR)
+        self.assertTrue(response["sources"])
+        self.assertEqual(response["sources"][0]["id"], "ctx-general-live-1")
 
 
 if __name__ == "__main__":
