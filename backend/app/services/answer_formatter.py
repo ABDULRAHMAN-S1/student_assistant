@@ -245,7 +245,10 @@ class AnswerFormatterService:
             if items:
                 excerpt = " ".join(ctx["dedupe_preserve_order"](items[:2])).strip()
                 return ctx["append_uncertainty_note"](excerpt, language) if ctx["context_is_partial"](context_item) else excerpt
-            return ctx["uncertainty_note"](language) if ctx["context_is_partial"](context_item) else ""
+            excerpt = ctx["clean_supporting_source_snippet"](ctx["extract_snippet"](context_item, question, language))
+            if not excerpt and ctx["context_is_partial"](context_item):
+                return ctx["uncertainty_note"](language)
+            return ctx["append_uncertainty_note"](excerpt, language) if ctx["context_is_partial"](context_item) else excerpt
         if items:
             excerpt = " ".join(ctx["dedupe_preserve_order"](items[:2])).strip()
             return ctx["append_uncertainty_note"](excerpt, language) if ctx["context_is_partial"](context_item) else excerpt

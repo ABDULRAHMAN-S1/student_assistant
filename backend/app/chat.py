@@ -915,32 +915,61 @@ def filter_items_for_question_kind(question: str, items: list[str]) -> list[str]
                     "راسب",
                     "الفصل من الجامعه",
                     "الفصل النهايي",
+                    "تنبيه شفهي",
+                    "تعهد كتابي",
+                    "رفع المخالفه",
                 )
             )
         elif kind in {"rules", "policy"}:
-            keep = any(
+            if any(
                 term in normalized
                 for term in (
-                    "لا يحق",
-                    "لا يجوز",
-                    "يجوز",
-                    "يلزم",
-                    "يلتزم",
-                    "تلتزم",
-                    "اولوية",
-                    "الحد الاعلي",
-                    "منع",
-                    "التنقل",
-                    "التاكد",
-                    "تخصيص",
-                    "ضبط",
-                    "النمط",
-                    "المصدر",
-                    "صلاحيات",
-                    "شعب",
-                    "حضور المقرر الحر",
+                    "نموذج",
+                    "اقر انا",
+                    "توقيع",
+                    "الحقول",
+                    "الرقم الجامعي",
                 )
-            )
+            ):
+                keep = False
+            else:
+                keep = any(
+                    term in normalized
+                    for term in (
+                        "لا يحق",
+                        "لا يجوز",
+                        "يجوز",
+                        "يلزم",
+                        "يلتزم",
+                        "تلتزم",
+                        "اولوية",
+                        "الحد الاعلي",
+                        "منع",
+                        "التنقل",
+                        "التاكد",
+                        "تخصيص",
+                        "ضبط",
+                        "النمط",
+                        "المصدر",
+                        "صلاحيات",
+                        "شعب",
+                        "حضور المقرر الحر",
+                        "ارتداء",
+                        "ملابس",
+                        "اكسسوارات",
+                        "رسومات",
+                        "شعارات",
+                        "الشورت",
+                        "المظهر العام",
+                        "الجهه المسووله",
+                        "مسووليه",
+                        "تتولي",
+                        "تحال",
+                        "لجنه التحقيق",
+                        "لجنه",
+                        "تاديب الطلاب",
+                    )
+                )
         elif kind == "system":
             keep = any(
                 term in normalized
@@ -1870,6 +1899,48 @@ def filter_contexts_for_generation(
             if mode_contexts:
                 return dedupe_preserve_order_contexts(mode_contexts)
 
+        normalized_question = normalize_for_matching(question)
+        if "ضوابط" in normalized_question and any(term in normalized_question for term in ("جهه", "مسوول", "مختص")):
+            authority_contexts = [
+                context
+                for context in rank_contexts_by_terms(
+                    contexts,
+                    include_any=("الجهة المسؤولة", "مسؤولية متابعة تنفيذ", "تتولى عمادة شؤون الطلاب"),
+                    prefer_article=("الماده الثامنه", "الجهه المسووله"),
+                )
+                if any(
+                    term in search_text(context)
+                    for term in ("الجهه المسووله", "مسووليه متابعه تنفيذ", "تتولي عماده شؤون الطلاب")
+                )
+            ][:2]
+            if authority_contexts:
+                return dedupe_preserve_order_contexts(authority_contexts)
+
+        if (
+            list_like_question_kind(question) == "rules"
+            and "ضوابط" in normalized_question
+            and any(term in normalized_question for term in ("الزي", "مظهر"))
+            and not any(term in normalized_question for term in ("جهه", "مسوول", "مختص", "لجنه", "احال", "تحويل"))
+        ):
+            dress_rule_contexts = [
+                context
+                for context in rank_contexts_by_terms(
+                    contexts,
+                    include_any=("ارتداء", "ملابس", "اكسسوارات", "رسومات", "شعارات", "الشورت", "المظهر العام"),
+                    prefer_article=("الماده العاشره",),
+                )
+                if any(
+                    term in search_text(context)
+                    for term in ("ارتداء", "ملابس", "اكسسوارات", "رسومات", "شعارات", "الشورت")
+                )
+                and not any(
+                    term in search_text(context)
+                    for term in ("نموذج", "الحقول", "توقيع", "اقر", "الرقم الجامعي")
+                )
+            ][:3]
+            if dress_rule_contexts:
+                return dedupe_preserve_order_contexts(dress_rule_contexts)
+
     query_profile = build_query_profile_for_answer(question, language)
     mode_priority: dict[str, float] = {}
 
@@ -1996,11 +2067,68 @@ def select_answer_contexts(question: str, contexts: list[dict[str, Any]], langua
         return contexts[:3]
 
     question_stems = build_question_stems(question, language)
-    ranked = sorted(
-        contexts,
-        key=lambda item: context_answer_score(item, question_stems, language),
-        reverse=True,
-    )
+    penalty_question = list_like_question_kind(question) == "penalties"
+    rules_question = list_like_question_kind(question) == "rules"
+    normalized_question = normalize_for_matching(question)
+
+    def adjusted_answer_score(context: dict[str, Any]) -> float:
+        score = context_answer_score(context, question_stems, language)
+        content_text = normalize_for_matching(context.get("content", ""))
+
+        if rules_question:
+            item_count = len(extract_context_answer_items(context, question, max_items=3))
+            if item_count > 0:
+                score += 1.2 * item_count
+            else:
+                score -= 1.0
+
+            if any(term in content_text for term in ("نموذج", "اقر انا", "توقيع", "الحقول", "الرقم الجامعي")):
+                score -= 1.4
+            if any(term in content_text for term in ("عمل جولات", "رصد كل مخالفه")):
+                score -= 0.8
+            if any(term in normalized_question for term in ("لجنه", "احال", "تحويل")):
+                if any(term in content_text for term in ("تحال", "لجنه التحقيق", "تاديب الطلاب")):
+                    score += 1.6
+                if any(term in content_text for term in ("اتعهد", "المخالفه الثانيه")):
+                    score -= 1.6
+
+        if not penalty_question:
+            return score
+
+        metadata = context.get("metadata", {})
+        metadata_text = normalize_for_matching(
+            " ".join(
+                part
+                for part in (
+                    metadata.get("article", ""),
+                    metadata.get("section", ""),
+                    metadata.get("title", ""),
+                )
+                if part
+            )
+        )
+
+        if "العقوبات" in metadata_text:
+            score += 1.4
+        if "تنبيه شفهي" in content_text:
+            score += 0.7
+        if "تعهد كتابي" in content_text:
+            score += 0.7
+        if "رفع المخالفه" in content_text:
+            score += 0.9
+
+        if "نموذج" in content_text:
+            score -= 1.0
+        if "اقر انا" in content_text:
+            score -= 1.1
+        if "توقيع" in content_text:
+            score -= 0.8
+        if "الحقول" in content_text:
+            score -= 0.8
+
+        return score
+
+    ranked = sorted(contexts, key=adjusted_answer_score, reverse=True)
     return ranked[:3]
 
 
@@ -2214,7 +2342,30 @@ def extract_context_answer_items(
         return dedupe_preserve_order([line for line in matched_lines if line])[:max_items]
 
     question_stems = build_question_stems(question, "ar")
-    scored_lines = [(score_line(line, question_stems), index, line) for index, line in enumerate(lines)]
+    normalized_question = normalize_for_matching(question)
+    committee_referral_question = any(term in normalized_question for term in ("لجنه", "احال", "تحويل"))
+    dress_rules_question = (
+        list_like_question_kind(question) == "rules"
+        and "ضوابط" in normalized_question
+        and any(term in normalized_question for term in ("الزي", "مظهر"))
+    )
+
+    scored_lines: list[tuple[float, int, str]] = []
+    for index, line in enumerate(lines):
+        score = score_line(line, question_stems)
+        normalized_line = normalize_for_matching(line)
+        if committee_referral_question:
+            if any(term in normalized_line for term in ("تحال", "لجنه التحقيق", "تاديب الطلاب")):
+                score += 2.0
+            if any(term in normalized_line for term in ("اتعهد", "المخالفه الثانيه", "اقر انا", "نموذج")):
+                score -= 2.0
+        if dress_rules_question:
+            if any(term in normalized_line for term in ("ارتداء", "ملابس", "اكسسوارات", "رسومات", "شعارات", "الشورت")):
+                score += 1.4
+            if any(term in normalized_line for term in ("الرقم الجامعي", "عمل جولات", "رصد كل مخالفه", "الحقول", "نموذج", "توقيع")):
+                score -= 1.4
+        scored_lines.append((score, index, line))
+
     scored_lines.sort(key=lambda item: (item[0], -item[1]), reverse=True)
     if not scored_lines:
         return []
@@ -2392,6 +2543,7 @@ def select_reference_contexts(
 
     preferred_source_type = explicit_source_type_preference(question)
     list_like = list_like_question_kind(question) is not None
+    list_kind = list_like_question_kind(question)
     status_codes = extract_status_code_terms(question)
 
     scoped_contexts = deduped_contexts
@@ -2431,6 +2583,7 @@ def select_reference_contexts(
             continue
         entry["context"] = context
         entry["support_score"] = context_answer_score(context, question_stems, "ar")
+        entry["item_count"] = len(extract_context_answer_items(context, question, max_items=3)) if list_kind == "rules" else 0
         entry["preferred_source_match"] = int(
             preferred_source_type is not None and context_source_type(context) == preferred_source_type
         )
@@ -2440,7 +2593,22 @@ def select_reference_contexts(
         return scoped_contexts[:max_items]
 
     if list_like:
-        ordered_entries = sort_reference_entries(entries)
+        if list_kind == "rules":
+            item_rich_entries = [entry for entry in entries if entry["item_count"] > 0]
+            if item_rich_entries:
+                entries = item_rich_entries
+            ordered_entries = sorted(
+                entries,
+                key=lambda item: (
+                    -item["item_count"],
+                    -item["support_score"],
+                    item["order_key"][0],
+                    item["order_key"][1],
+                    item["index"],
+                ),
+            )
+        else:
+            ordered_entries = sort_reference_entries(entries)
     else:
         ordered_entries = sorted(
             entries,
@@ -3626,6 +3794,8 @@ def build_direct_arabic_answer(question: str, snippets: list[str], unclear: bool
         answer = f"لا، {negative_snippets[0]}"
     elif yes_no and positive:
         answer = f"نعم، {positive}"
+    elif list_like_question_kind(question) == "penalties":
+        answer = snippets[0]
     else:
         answer = " ".join(dedupe_preserve_order(snippets[:2]))
 
