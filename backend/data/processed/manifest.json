@@ -1,13 +1,14 @@
 {
   "output_file": "data\\processed\\taibah_regulations.jsonl",
-  "document_count": 9,
-  "chunk_count": 567,
+  "document_count": 11,
+  "chunk_count": 518,
   "documents": [
     {
       "source_file": "general_education_elective_courses_policy_cleaned.txt",
       "detected_title": "دليل ضوابط إنشاء وتسجيل مقررات المتطلبات العامة والمقررات الحرة بجامعة طيبة",
       "doc_type": "regulation",
-      "number_of_chunks": 70,
+      "language": "ar",
+      "number_of_chunks": 65,
       "source_hash": "8a5f9d0f5cf9c7414084959106981b277c5c383c2b7002dc38405cfea6402f43",
       "cleaned_hash": "f2bd0de0b714ce45ed5638063200aebb4ea3d38990df3edfa9b4c9cac050bf31",
       "status": "complete",
@@ -29,7 +30,8 @@
       "source_file": "pharmd_student_guide_ar_cleaned.txt",
       "detected_title": "دليل الإرشاد للطالب الجامعي",
       "doc_type": "guide",
-      "number_of_chunks": 28,
+      "language": "ar",
+      "number_of_chunks": 22,
       "source_hash": "184d4e236da7f6dd9de3c21cf7e3d74f71c660624f34ee350e7042adfc9a97f3",
       "cleaned_hash": "e2beeb99c6a967f42abb92c0a8da5d31505b2c916da61ca82c6d90ccfebc646c",
       "status": "complete",
@@ -49,6 +51,7 @@
       "source_file": "taibah_academic_regulations_ar.txt.txt",
       "detected_title": "لائحة الدراسة والاختبارات للمرحلة الجامعية",
       "doc_type": "regulation",
+      "language": "ar",
       "number_of_chunks": 197,
       "source_hash": "2a1d57a894ef1d893bbe460cd9302aff05de89fd0eefa9dd440a81c13047dbab",
       "cleaned_hash": "2a1d57a894ef1d893bbe460cd9302aff05de89fd0eefa9dd440a81c13047dbab",
@@ -71,9 +74,10 @@
       "source_file": "taibah_dress_code_ar.txt",
       "detected_title": "ضوابط الزي الجامعي والمظهر العام لطلبة جامعة طيبة",
       "doc_type": "regulation",
-      "number_of_chunks": 16,
+      "language": "ar",
+      "number_of_chunks": 10,
       "source_hash": "7189db4c8c887860152f679166a9ea77d56dc9a20c2e918eae50b9fb69ae4aad",
-      "cleaned_hash": "9a6e38c6f4c69680fcc561f20d809e93f78c4bbeec9d05c14b767266b709d5ce",
+      "cleaned_hash": "7ef12dc6da1e27d405881a73e9a46fad0dfe834f0788ad224193778c03aba457",
       "status": "complete",
       "qa_summary": {
         "heading_only_removed": 0,
@@ -92,7 +96,8 @@
       "source_file": "taibah_student_conduct_and_discipline_rules_ar.txt.txt",
       "detected_title": "قواعد السلوك والانضباط الطلابي",
       "doc_type": "regulation",
-      "number_of_chunks": 66,
+      "language": "ar",
+      "number_of_chunks": 38,
       "source_hash": "7c7420011a7e119b3e619b64323d7ae86a3ddfca5dc0d136e7d95e139f7e9059",
       "cleaned_hash": "c92401f3ea73139fdd2bb594be37a2e4054dc5cd7ae9bd6e7c8abe32a7d0d5c1",
       "status": "complete",
@@ -112,28 +117,73 @@
       "source_file": "taibah_student_housing_rules_ar.txt",
       "detected_title": "القواعد المنظمة للإسكان الطلابي بجامعة طيبة",
       "doc_type": "regulation",
-      "number_of_chunks": 130,
+      "language": "ar",
+      "number_of_chunks": 119,
       "source_hash": "d36ad73a2112024c8a4a6144ad4716ffebe538cae6d4bcae40fac77f88ed70f0",
-      "cleaned_hash": "b370c8570140d5ed227305eee53ed4006154c97266579dd268f360443d432c91",
+      "cleaned_hash": "716b28ef78d27ce2a62fd94260da149eedc0fa0b426f7e3ecbc61df1b68b5cbb",
       "status": "complete",
       "qa_summary": {
-        "heading_only_removed": 2,
+        "heading_only_removed": 1,
         "duplicate_chunks_removed": 0,
-        "tiny_chunks_flagged": 37,
+        "tiny_chunks_flagged": 36,
         "partial_chunks_flagged": 0,
         "missing_metadata_flagged": 0
       },
       "notes": [
         "العنوان تم التقاطه من الحقول التعريفية.",
-        "تم استبعاد 2 مقطعًا كان عبارة عن عناوين فقط.",
-        "تم وسم 37 مقطعًا قصيرًا منخفض الإشارة للمراجعة."
+        "تم استبعاد 1 مقطعًا كان عبارة عن عناوين فقط.",
+        "تم وسم 36 مقطعًا قصيرًا منخفض الإشارة للمراجعة."
+      ]
+    },
+    {
+      "source_file": "تنظيم تقديم الشكاوى وضمان العدالة والشفافية للطلاب با الانجليزي.txt",
+      "detected_title": "Student Complaints and Appeals Procedures Guide",
+      "doc_type": "guide",
+      "language": "en",
+      "number_of_chunks": 12,
+      "source_hash": "d11e85805234ad834f523f39dbca468c94fdce24ef91d1e2ad712cb199850dc5",
+      "cleaned_hash": "e56c10a753e2794361fa3d86519d8e8adc419d5a6dc7c5800099d7ef67850269",
+      "status": "complete",
+      "qa_summary": {
+        "heading_only_removed": 0,
+        "duplicate_chunks_removed": 0,
+        "tiny_chunks_flagged": 0,
+        "partial_chunks_flagged": 0,
+        "missing_metadata_flagged": 1
+      },
+      "notes": [
+        "العنوان تم التقاطه من بداية النص.",
+        "تم وسم 1 مقطعًا بنقص في محددات التتبع أو العنوان."
+      ]
+    },
+    {
+      "source_file": "تنظيم تقديم الشكاوى وضمان العدالة والشفافية للطلاب بالعربي.txt",
+      "detected_title": "دليل إجراءات الشكاوى والتظلمات الطلابية",
+      "doc_type": "guide",
+      "language": "ar",
+      "number_of_chunks": 11,
+      "source_hash": "1b5b775530d0155d594649cdcd5d8b5e0a276b9fc7c2e8c7d31e5f51db4c90d2",
+      "cleaned_hash": "28d04c6bbd7631c071456ad48d0c8f98d144e137b28864d366144e1ae3600f35",
+      "status": "complete",
+      "qa_summary": {
+        "heading_only_removed": 0,
+        "duplicate_chunks_removed": 0,
+        "tiny_chunks_flagged": 1,
+        "partial_chunks_flagged": 0,
+        "missing_metadata_flagged": 1
+      },
+      "notes": [
+        "العنوان تم التقاطه من بداية النص.",
+        "تم وسم 1 مقطعًا قصيرًا منخفض الإشارة للمراجعة.",
+        "تم وسم 1 مقطعًا بنقص في محددات التتبع أو العنوان."
       ]
     },
     {
       "source_file": "دليل القبول.txt",
       "detected_title": "دليل القبول الجامعي",
       "doc_type": "guide",
-      "number_of_chunks": 7,
+      "language": "ar",
+      "number_of_chunks": 3,
       "source_hash": "4c0475c7ae584e4b9504ab9783810ce0f0b269edb205629e4e56b90c5406ae59",
       "cleaned_hash": "e5a95c10a00dc8103271f41e4a6319d6b98eda4a541acc5cd8d8e564c7a705ea",
       "status": "complete",
@@ -153,12 +203,13 @@
       "source_file": "دليل المقرارات العامه.txt",
       "detected_title": "دليل مقررات المتطلبات العامة بجامعة طيبة",
       "doc_type": "guide",
-      "number_of_chunks": 34,
+      "language": "ar",
+      "number_of_chunks": 29,
       "source_hash": "a093d60f94523d4f1e6320742e9d946bfbf11f010cd8cb1988cf11a9a8bc6412",
-      "cleaned_hash": "75a185f73f920af1d403cb7f03fd38932346c251bcbdfb3c69dae5eb0a83922c",
+      "cleaned_hash": "cfbf96c1c981db8dd58268628da5f182c03fa6b518b7ee8dc7fdf32a1e714e14",
       "status": "complete",
       "qa_summary": {
-        "heading_only_removed": 6,
+        "heading_only_removed": 0,
         "duplicate_chunks_removed": 0,
         "tiny_chunks_flagged": 2,
         "partial_chunks_flagged": 0,
@@ -166,7 +217,6 @@
       },
       "notes": [
         "العنوان تم التقاطه من بداية النص.",
-        "تم استبعاد 6 مقطعًا كان عبارة عن عناوين فقط.",
         "تم وسم 2 مقطعًا قصيرًا منخفض الإشارة للمراجعة."
       ]
     },
@@ -174,7 +224,8 @@
       "source_file": "دليل شروط و إجراءات الدراسة بنظام الزيارة بجامعة طيبة.txt",
       "detected_title": "دليل شروط وإجراءات الدراسة بنظام الزيارة بجامعة طيبة",
       "doc_type": "guide",
-      "number_of_chunks": 19,
+      "language": "ar",
+      "number_of_chunks": 12,
       "source_hash": "02701a5d5728d33b0ca115314d8f25933228819c13f874027cfd8e737a024938",
       "cleaned_hash": "0bc8fd3125049d8eddb635e26b348a6be0f00b4390a4064e9dd0850f2d813ad8",
       "status": "complete",

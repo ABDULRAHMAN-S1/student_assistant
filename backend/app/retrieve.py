@@ -790,6 +790,52 @@ def infer_query_flags(query_profile: dict[str, Any]) -> dict[str, bool]:
     stems = set(query_profile["stems"])
     tokens = set(query_profile["tokens"])
     return {
+        "complaints": bool({"شكوي", "شكاوي", "تظلم", "تظلمات"} & stems)
+        or any(
+            phrase in normalized_query
+            for phrase in (
+                "قنوات تقديم الشكوي",
+                "شروط قبول الشكوي",
+                "كيف اقدم شكوي",
+                "تقديم الشكوي",
+                "التظلم الاكاديمي",
+                "الادله المطلوبه",
+            )
+        ),
+        "complaint_channels": any(
+            phrase in normalized_query
+            for phrase in (
+                "قنوات تقديم الشكوي",
+                "النظام الالكتروني",
+                "البريد الالكتروني",
+                "مكاتب الدعم الطلابي",
+                "التواصل المباشر",
+            )
+        ),
+        "complaint_conditions": any(
+            phrase in normalized_query
+            for phrase in (
+                "شروط قبول الشكوي",
+                "قبول الشكوي",
+                "وضوح الشكوي",
+                "وجود ادله",
+                "الوقت المحدد",
+            )
+        ),
+        "complaint_evidence": bool({"ادله", "دليل", "اثبات", "مستندات", "ايميلات", "صور"} & stems)
+        or any(phrase in normalized_query for phrase in ("الادله المطلوبه", "ارفاق الادله")),
+        "complaint_submission": any(
+            phrase in normalized_query
+            for phrase in (
+                "كيف اقدم شكوي",
+                "اقدم شكوي",
+                "تقديم الشكوي",
+                "ارسال الطلب",
+                "قنوات تقديم الشكوي",
+            )
+        ),
+        "complaint_appeal": bool({"تظلم", "تظلمات"} & stems)
+        or any(phrase in normalized_query for phrase in ("التظلم الاكاديمي", "التظلم", "التظلمات")),
         "housing": bool({"سكن", "اسكان", "اقام"} & stems)
         or any(phrase in normalized_query for phrase in ("السكن الطلابي", "السكن الجامعي", "الاسكان الطلابي")),
         "dress": bool({"زي", "مظهر", "عباي", "لبس"} & stems)
@@ -857,7 +903,81 @@ def infer_record_flags(record: dict[str, Any]) -> dict[str, bool]:
             if part
         )
     )
+    has_complaint_word = any(term in text for term in ("شكوي", "شكاوي"))
+    has_appeal_word = any(term in text for term in ("تظلم", "تظلمات", "اعتراض"))
     return {
+        "complaint_guide_title": "اجراءات الشكاوي والتظلمات الطلابيه" in text,
+        "complaint_process": any(
+            term in text
+            for term in (
+                "قنوات تقديم الشكوي",
+                "شروط قبول الشكوي",
+                "تقديم الطلب",
+                "ارسال الطلب",
+                "ارفاق الادله",
+                "النظام الالكتروني",
+                "البريد الالكتروني",
+                "مكاتب الدعم الطلابي",
+                "التواصل المباشر",
+                "اعترض علي درجتي",
+                "يتم مراجعته من القسم",
+                "مراجعه الطلب",
+                "تحويله للقسم",
+                "اصدار القرار",
+            )
+        ) and (has_complaint_word or has_appeal_word),
+        "complaint_channels": any(
+            term in text
+            for term in (
+                "قنوات تقديم الشكوي",
+                "النظام الالكتروني",
+                "البريد الالكتروني",
+                "مكاتب الدعم الطلابي",
+                "التواصل المباشر",
+            )
+        ) and has_complaint_word,
+        "complaint_conditions": any(
+            term in text
+            for term in (
+                "شروط قبول الشكوي",
+                "تقديمها في الوقت المحدد",
+                "وضوح الشكوي",
+                "وجود ادله",
+                "بدون دليل",
+            )
+        ) and has_complaint_word,
+        "complaint_evidence": any(
+            term in text
+            for term in (
+                "ارفاق الادله",
+                "درجات",
+                "ايميلات",
+                "صور",
+                "مستندات",
+                "ترفق الدليل",
+            )
+        ) and has_complaint_word,
+        "complaint_submission": any(
+            term in text
+            for term in (
+                "تقديم الطلب",
+                "ارسال الطلب",
+                "تكتب الشكوي بوضوح",
+                "تحديد نوع الشكوي",
+                "قنوات تقديم الشكوي",
+            )
+        ) and has_complaint_word,
+        "complaint_appeal": any(
+            term in text
+            for term in (
+                "تظلم",
+                "اعتراض",
+                "تقديم الطلب خلال مده محدده",
+                "مراجعه الطلب",
+                "تحويله للقسم",
+                "اصدار القرار",
+            )
+        ) and has_appeal_word,
         "housing": any(term in text for term in ("اسكان", "سكن")),
         "dress": any(term in text for term in ("الزي", "مظهر")),
         "attendance": any(term in text for term in ATTENDANCE_SIGNAL_TERMS),
@@ -1224,8 +1344,11 @@ def search(query: str, top_k: int = 4) -> list[dict[str, Any]]:
     if not raw_query:
         return []
 
-    candidate_limit = max(24, top_k * 12)
     query_profile = build_query_profile(raw_query)
+    query_flags = infer_query_flags(query_profile)
+    candidate_limit = max(24, top_k * 12)
+    if query_flags["complaints"]:
+        candidate_limit = max(candidate_limit, 180)
     code_tokens = extract_status_code_tokens(query_profile)
     code_style_query = is_code_style_query(query_profile, code_tokens)
     semantic_matches = semantic_search(raw_query, top_k=candidate_limit)
@@ -1246,8 +1369,8 @@ def search(query: str, top_k: int = 4) -> list[dict[str, Any]]:
         or bool(code_tokens)
         or any(SHORT_LATIN_TOKEN_PATTERN.match(token) for token in lexical_query_profile["tokens"])
     )
-    query_flags = infer_query_flags(query_profile)
     record_map = get_chunk_record_map()
+    normalized_query = query_profile["normalized_query"]
 
     combined_matches: dict[str, dict[str, Any]] = {}
     for match in semantic_matches:
@@ -1272,6 +1395,60 @@ def search(query: str, top_k: int = 4) -> list[dict[str, Any]]:
         )
         item["lexical_score"] = max(item["lexical_score"], match["score"])
 
+    if normalized_query:
+        for record in record_map.values():
+            direct_match_targets = {
+                normalize_for_matching(record["metadata"].get("document_title", "")),
+                normalize_for_matching(record["metadata"].get("section", "")),
+                normalize_for_matching(record["metadata"].get("article", "")),
+            }
+            direct_match_targets.discard("")
+            if normalized_query not in direct_match_targets:
+                continue
+
+            item = combined_matches.setdefault(
+                record["id"],
+                {
+                    "id": record["id"],
+                    "content": record["content"],
+                    "metadata": record["metadata"],
+                    "semantic_score": 0.0,
+                    "lexical_score": 0.0,
+                },
+            )
+            item["lexical_score"] = max(item["lexical_score"], 0.74)
+
+    if query_flags["complaints"]:
+        for record in record_map.values():
+            record_flags = infer_record_flags(record)
+            if not record_flags["complaint_process"]:
+                continue
+            if normalize_doc_type(record["metadata"].get("doc_type", "regulation")) != "guide":
+                continue
+
+            if query_flags["complaint_channels"] and not record_flags["complaint_channels"]:
+                continue
+            if query_flags["complaint_conditions"] and not record_flags["complaint_conditions"]:
+                continue
+            if query_flags["complaint_evidence"] and not record_flags["complaint_evidence"]:
+                continue
+            if query_flags["complaint_submission"] and not record_flags["complaint_submission"]:
+                continue
+            if query_flags["complaint_appeal"] and not record_flags["complaint_appeal"]:
+                continue
+
+            item = combined_matches.setdefault(
+                record["id"],
+                {
+                    "id": record["id"],
+                    "content": record["content"],
+                    "metadata": record["metadata"],
+                    "semantic_score": 0.0,
+                    "lexical_score": 0.0,
+                },
+            )
+            item["lexical_score"] = max(item["lexical_score"], 0.46)
+
     ranked = []
     for item in combined_matches.values():
         record = record_map.get(item["id"])
@@ -1281,6 +1458,9 @@ def search(query: str, top_k: int = 4) -> list[dict[str, Any]]:
         lexical_score = item["lexical_score"]
         semantic_score = item["semantic_score"]
         searchable_text = f"{record['normalized_metadata']} {record['normalized_content']}"
+        normalized_title = normalize_for_matching(record["metadata"].get("document_title", ""))
+        normalized_section = normalize_for_matching(record["metadata"].get("section", ""))
+        normalized_article = normalize_for_matching(record["metadata"].get("article", ""))
         score = combine_scores(
             semantic_score,
             lexical_score,
@@ -1294,6 +1474,20 @@ def search(query: str, top_k: int = 4) -> list[dict[str, Any]]:
         article_code_matches = status_code_article_match_count(record, code_tokens)
         definition_line_matches = status_code_definition_line_match_count(record, code_tokens)
         attendance_matches = attendance_match_count(record, query_profile)
+
+        if normalized_query:
+            if normalized_title and normalized_query == normalized_title:
+                score += 0.34
+            elif normalized_title and normalized_query in normalized_title:
+                score += 0.18
+
+            if normalized_section and normalized_query == normalized_section:
+                score += 0.3
+            elif normalized_section and normalized_query in normalized_section:
+                score += 0.14
+
+            if normalized_article and normalized_query == normalized_article:
+                score += 0.2
 
         if code_tokens:
             if exact_code_matches > 0:
@@ -1346,6 +1540,47 @@ def search(query: str, top_k: int = 4) -> list[dict[str, Any]]:
             score += 0.1 * phrase_ratio
         elif query_profile["phrases"] and lexical_score < 0.45:
             score -= 0.08
+
+        if query_flags["complaints"]:
+            query_needs_complaint_word = any(term in normalized_query for term in ("شكوي", "شكاوي"))
+            query_needs_appeal_word = any(term in normalized_query for term in ("تظلم", "تظلمات", "اعتراض"))
+            has_complaint_anchor = any(
+                term in searchable_text
+                for term in (
+                    "شكوي",
+                    "شكاوي",
+                    "تظلم",
+                    "تظلمات",
+                    "اعتراض",
+                    "قنوات تقديم الشكوي",
+                    "شروط قبول الشكوي",
+                    "ادله",
+                )
+            )
+            if not has_complaint_anchor:
+                continue
+            if query_needs_complaint_word and not any(term in searchable_text for term in ("شكوي", "شكاوي")):
+                continue
+            if query_needs_appeal_word and not any(term in searchable_text for term in ("تظلم", "تظلمات", "اعتراض")):
+                continue
+            if not record_flags["complaint_process"]:
+                continue
+            if record_flags["complaint_process"]:
+                score += 0.24
+                if quality_flags["is_guide"]:
+                    score += 0.08
+                if record_flags["complaint_guide_title"]:
+                    score += 0.1
+                if query_flags["complaint_channels"]:
+                    score += 0.28 if record_flags["complaint_channels"] else -0.1
+                if query_flags["complaint_conditions"]:
+                    score += 0.32 if record_flags["complaint_conditions"] else -0.12
+                if query_flags["complaint_evidence"]:
+                    score += 0.28 if record_flags["complaint_evidence"] else -0.1
+                if query_flags["complaint_submission"]:
+                    score += 0.3 if record_flags["complaint_submission"] else -0.12
+                if query_flags["complaint_appeal"]:
+                    score += 0.3 if record_flags["complaint_appeal"] else -0.12
 
         if record_flags["housing"] and not query_flags["housing"] and lexical_score < 0.55:
             score -= 0.12
@@ -1488,7 +1723,8 @@ def search(query: str, top_k: int = 4) -> list[dict[str, Any]]:
             }
         )
 
-    ranked = apply_authority_rerank(ranked)
+    if not query_flags["complaints"]:
+        ranked = apply_authority_rerank(ranked)
 
     ranked.sort(key=lambda item: final_result_sort_key(item, prefer_housing=query_flags["housing"]))
     strong_ranked = [item for item in ranked if not should_exclude_from_top_results(item)]

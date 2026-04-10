@@ -46,6 +46,10 @@ SECTION_RE = re.compile(
     r"^(?:أولاً|أولا|ثانياً|ثانيا|ثالثاً|ثالثا|رابعاً|رابعا|خامساً|خامسا|سادساً|سادسا|"
     r"سابعاً|سابعا|ثامناً|ثامنا|تاسعاً|تاسعا|عاشراً|عاشرا|الحادي عشر|الثاني عشر)\s*[:：].*$"
 )
+ENGLISH_SECTION_RE = re.compile(
+    r"^(?:first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth)\s*:\s+.+$",
+    re.IGNORECASE,
+)
 CLAUSE_RE = re.compile(r"^(?P<label>(?:\d+|[" + ARABIC_DIGITS + r"]+|[أ-ي]))[.)-]\s+.+$")
 DEFINITION_RE = re.compile(r"^(?P<label>[^:]{2,70}):\s+.+$")
 FAQ_QUESTION_RE = re.compile(r"^(?:س(?:ؤال)?|q(?:uestion)?)\s*[:：\-]\s*.+$", re.IGNORECASE)
@@ -117,7 +121,6 @@ def normalize_line(line: str) -> str:
 def clean_markdown_line(line: str) -> str:
     cleaned = line.replace("**", "").replace("__", "")
     cleaned = MARKDOWN_HEADER_RE.sub("", cleaned)
-    cleaned = MARKDOWN_BULLET_RE.sub("", cleaned)
     cleaned = cleaned.replace("`", "")
     return cleaned.strip()
 
@@ -233,6 +236,38 @@ def count_words(text: str) -> int:
     return len([part for part in (text or "").split() if part.strip()])
 
 
+def normalize_language_hint(value: str) -> str:
+    normalized = normalize_text(value).lower()
+    if not normalized:
+        return ""
+
+    if any(token in normalized for token in ("english", "الانجليزي", "الإنجليزي", "الانجليزية", "الإنجليزية", "انجليزي")):
+        return "en"
+    if any(token in normalized for token in ("arabic", "بالعربي", "العربي", "العربية", "عربي")):
+        return "ar"
+    if re.search(r"(?<![a-z])en(?![a-z])", normalized):
+        return "en"
+    if re.search(r"(?<![a-z])ar(?![a-z])", normalized):
+        return "ar"
+    return ""
+
+
+def detect_document_language(
+    metadata: dict[str, str],
+    source_file: str,
+    document_title: str,
+    content: str,
+) -> str:
+    for candidate in (metadata.get("اللغة", ""), source_file, document_title):
+        detected = normalize_language_hint(candidate)
+        if detected:
+            return detected
+
+    arabic_chars = len(re.findall(r"[\u0600-\u06FF]", content))
+    latin_chars = len(re.findall(r"[A-Za-z]", content))
+    return "en" if latin_chars > arabic_chars else "ar"
+
+
 def detect_doc_type(filename: str, document_title: str = "", content: str = "") -> str:
     lowered_filename = filename.lower()
     lowered_title = document_title.lower()
@@ -336,9 +371,9 @@ def is_unreadable_line(line: str) -> bool:
         return True
     if "�" in line:
         return True
-    arabic_or_digit_count = len(re.findall(r"[\u0600-\u06FF0-9" + ARABIC_DIGITS + r"]", line))
-    suspicious_count = len(re.findall(r"[^\u0600-\u06FF0-9" + ARABIC_DIGITS + r"\s\[\]\(\)\-_/.:،؛؟!]", line))
-    return arabic_or_digit_count == 0 and suspicious_count >= 4
+    readable_char_count = len(re.findall(r"[A-Za-z\u0600-\u06FF0-9" + ARABIC_DIGITS + r"]", line))
+    suspicious_count = len(re.findall(r"[^A-Za-z\u0600-\u06FF0-9" + ARABIC_DIGITS + r"\s\[\]\(\)\-_/.:،؛؟!]", line))
+    return readable_char_count == 0 and suspicious_count >= 4
 
 
 def detect_repeated_header_candidates(lines: list[str], title: str) -> set[str]:
@@ -421,6 +456,7 @@ def is_standalone_heading(line: str, next_line: str) -> bool:
             EXEC_RULE_RE.match(line),
             ARTICLE_RE.match(line),
             SECTION_RE.match(line),
+            ENGLISH_SECTION_RE.match(line),
             CLAUSE_RE.match(line),
         )
     ):
@@ -460,6 +496,7 @@ def is_heading_like_line(line: str) -> bool:
             EXEC_RULE_RE.match(normalized),
             ARTICLE_RE.match(normalized),
             SECTION_RE.match(normalized),
+            ENGLISH_SECTION_RE.match(normalized),
         )
     ):
         return True
@@ -533,6 +570,7 @@ def build_entries(
     source_file: str,
     document_title: str,
     doc_type: str,
+    language: str,
     lines: list[str],
 ) -> list[dict[str, Any]]:
     entries: list[dict[str, Any]] = []
@@ -563,7 +601,7 @@ def build_entries(
                 "source_file": source_file,
                 "document_title": document_title,
                 "doc_type": doc_type,
-                "language": "ar",
+                "language": language,
                 "section": current_section,
                 "article": current_article,
                 "content": content,
@@ -608,7 +646,12 @@ def build_entries(
             context.article = ""
             continue
 
-        if not context.article and (SECTION_RE.match(line) or is_standalone_heading(line, next_line) or is_colon_heading(line, next_line)):
+        if not context.article and (
+            SECTION_RE.match(line)
+            or ENGLISH_SECTION_RE.match(line)
+            or is_standalone_heading(line, next_line)
+            or is_colon_heading(line, next_line)
+        ):
             flush()
             context.section = line.rstrip(":：")
             context.article = ""
@@ -815,6 +858,7 @@ def build_semantic_blocks(body_lines: list[str]) -> list[str]:
                 EXEC_RULE_RE.match(line),
                 ARTICLE_RE.match(line),
                 SECTION_RE.match(line),
+                ENGLISH_SECTION_RE.match(line),
                 CLAUSE_RE.match(line),
             )
         ):
@@ -1021,6 +1065,7 @@ def load_existing_manifest_documents(existing_entries: list[dict[str, Any]]) -> 
                 "source_file": source_file,
                 "detected_title": document_title,
                 "doc_type": source_entries[0].get("doc_type", "regulation"),
+                "language": source_entries[0].get("language", ""),
                 "number_of_chunks": len(source_entries),
                 "status": "partial" if partial_chunks else "complete",
                 "source_hash": "",
@@ -1072,6 +1117,7 @@ def load_raw_documents(skip_hashes: set[str] | None = None) -> list[dict[str, An
             continue
 
         doc_type = detect_doc_type(path.name, document_title, cleaned_source_text)
+        document_language = detect_document_language(metadata, path.name, document_title, cleaned_source_text)
         if cleaned_lines and is_title_like(cleaned_lines[0], document_title):
             cleaned_lines.pop(0)
             while cleaned_lines and cleaned_lines[0] == "":
@@ -1079,7 +1125,7 @@ def load_raw_documents(skip_hashes: set[str] | None = None) -> list[dict[str, An
 
         base_entries = rebalance_entries(
             path.name,
-            build_entries(path.name, document_title, doc_type, cleaned_lines),
+            build_entries(path.name, document_title, doc_type, document_language, cleaned_lines),
         )
         entries, qa_summary = apply_chunk_qa(path.name, base_entries)
         partial_chunks = sum(1 for entry in entries if entry["status"] == "partial")
@@ -1087,6 +1133,7 @@ def load_raw_documents(skip_hashes: set[str] | None = None) -> list[dict[str, An
             "source_file": path.name,
             "detected_title": document_title,
             "doc_type": doc_type,
+            "language": document_language,
             "number_of_chunks": len(entries),
             "source_hash": source_hash,
             "cleaned_hash": cleaned_hash,

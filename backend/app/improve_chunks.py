@@ -28,6 +28,10 @@ SECTION_RE = re.compile(
     r"^(?:أولاً|أولا|ثانياً|ثانيا|ثالثاً|ثالثا|رابعاً|رابعا|خامساً|خامسا|سادساً|سادسا|"
     r"سابعاً|سابعا|ثامناً|ثامنا|تاسعاً|تاسعا|عاشراً|عاشرا|الحادي عشر|الثاني عشر)\s*[:：].*$"
 )
+ENGLISH_SECTION_RE = re.compile(
+    r"^(?:first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth)\s*:\s+.+$",
+    re.IGNORECASE,
+)
 ALPHA_HEADING_RE = re.compile(r"^[أ-ي]\.\s+.+$")
 CLAUSE_RE = re.compile(r"^(?P<label>(?:\d+|[" + ARABIC_DIGITS + r"]+|[أ-ي]))[.)-]\s+.+$")
 BULLET_RE = re.compile(r"^[-•]\s+.+$")
@@ -98,6 +102,7 @@ def is_anchor_line(line: str) -> bool:
         or EXEC_RULE_RE.match(line)
         or ARTICLE_RE.match(line)
         or SECTION_RE.match(line)
+        or ENGLISH_SECTION_RE.match(line)
         or ALPHA_HEADING_RE.match(line)
         or is_short_colon_heading(line)
         or line.startswith("الملحق")

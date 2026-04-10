@@ -1,12 +1,12 @@
 {
   "collection_name": "university_regulations",
   "embedding_model": "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
-  "chunk_count": 567,
-  "processed_sync_hash": "1d286b526cd54649bc9b8b21feda530d0db7f6f165f4485047c5c35fe1458346",
-  "new_chunks_added": 567,
+  "chunk_count": 518,
+  "processed_sync_hash": "9154f39942ad4610e0261f7836f31a4ce6b4b40595e98741a1d2bef64c0fd92d",
+  "new_chunks_added": 518,
   "updated_chunks": 0,
   "deleted_chunks": 0,
   "rebuild": true,
-  "vector_count": 567,
+  "vector_count": 518,
   "vectordb_path": "data\\vectordb"
 }
