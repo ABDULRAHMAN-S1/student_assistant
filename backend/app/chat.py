@@ -918,6 +918,17 @@ def filter_items_for_question_kind(question: str, items: list[str]) -> list[str]
                     "رفع المخالفه",
                 )
             )
+            if keep and penalty_question_domain(question) == "cheating":
+                if any(term in normalized for term in ("سكن", "اسكان", "الاسكان", "الاقامه")) and not any(
+                    term in normalized for term in ("غش", "اختبار")
+                ):
+                    keep = False
+                normalized_q = normalize_for_matching(question)
+                if keep and any(term in normalized_q for term in ("الاختبار", "اختبار")):
+                    if any(term in normalized for term in ("العمل", "البحث", "التقرير", "الواجب")) and not any(
+                        term in normalized for term in ("الاختبار", "اختبار")
+                    ):
+                        keep = False
         elif kind in {"rules", "policy"}:
             if any(
                 term in normalized
@@ -2824,6 +2835,21 @@ def build_attendance_limit_arabic_answer(question: str, contexts: list[dict[str,
     return "لم أجد في النص المتاح نسبة غياب صريحة، وإنما ظهر فقط اشتراط حد أدنى للحضور عندما يكون ذلك مذكوراً بوضوح."
 
 
+def _dedupe_subsumption(items: list[str]) -> list[str]:
+    """Remove items that are a prefix of a longer item (keep the longer one)."""
+    normalized_items = [(normalize_for_matching(item), item) for item in items]
+    result: list[str] = []
+    for i, (norm_i, orig_i) in enumerate(normalized_items):
+        subsumed = False
+        for j, (norm_j, _) in enumerate(normalized_items):
+            if i != j and norm_j.startswith(norm_i) and len(norm_j) > len(norm_i):
+                subsumed = True
+                break
+        if not subsumed:
+            result.append(orig_i)
+    return result
+
+
 def build_list_like_arabic_answer(question: str, contexts: list[dict[str, Any]]) -> str | None:
     if list_like_question_kind(question) is None or not contexts:
         return None
@@ -2839,6 +2865,7 @@ def build_list_like_arabic_answer(question: str, contexts: list[dict[str, Any]])
     if not items:
         return None
 
+    items = _dedupe_subsumption(items)[:max_items]
     intro = list_like_intro(question, item_count=len(items), contexts=contexts)
     if len(items) == 1:
         return f"{intro}: {items[0]}"
@@ -3014,6 +3041,7 @@ def apply_source_aware_arabic_wording(
         return cleaned
 
     primary_intro = source_intro_phrase(context_source_type(primary_context), "ar")
+    first_line = cleaned.split("\n", 1)[0]
     if cleaned.startswith(
         (
             "وفق اللائحة",
@@ -3030,7 +3058,7 @@ def apply_source_aware_arabic_wording(
             "كما ورد في اللائحة",
             "كما ورد في السياسة",
         )
-    ):
+    ) or any(phrase in first_line for phrase in ("في اللائحة", "وفق اللائحة", "في السياسة", "وفق السياسة")):
         return cleaned
 
     if cleaned.startswith(("لم أجد في اللائحة", "لم أجد في النص المتاح رقم", "لم أجد في النص المتاح عدد")) and (
