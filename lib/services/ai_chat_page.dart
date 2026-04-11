@@ -1143,6 +1143,7 @@ class _AIChatPageState extends State<AIChatPage> {
     }
 
     final previousHelpful = message.helpful;
+    final question = _questionForMessage(message);
 
     setState(() {
       _messages[messageIndex] = message.copyWith(helpful: helpful);
@@ -1151,7 +1152,7 @@ class _AIChatPageState extends State<AIChatPage> {
 
     try {
       await _assistantRepository.sendFeedback(
-        question: _questionForMessage(message),
+        question: question,
         answer: message.text,
         helpful: helpful,
         language: widget.isArabic ? 'ar' : 'en',
