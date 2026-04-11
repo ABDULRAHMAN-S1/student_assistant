@@ -8,6 +8,8 @@ MAX_SEARCH_QUERY_LENGTH = 500
 MAX_ANSWER_LENGTH = 4000
 MAX_LANGUAGE_LENGTH = 16
 MAX_FEEDBACK_SOURCES = 10
+MAX_REASON_LENGTH = 100
+MAX_ROUTE_MODE_LENGTH = 50
 
 
 class StrictModel(BaseModel):
@@ -30,6 +32,8 @@ class FeedbackRequest(StrictModel):
     helpful: bool
     language: str = Field("", max_length=MAX_LANGUAGE_LENGTH)
     sources: list[dict[str, object]] = Field(default_factory=list, max_length=MAX_FEEDBACK_SOURCES)
+    reason: str = Field("", max_length=MAX_REASON_LENGTH)
+    route_mode: str = Field("", max_length=MAX_ROUTE_MODE_LENGTH)
 
 
 class TranslateRequest(StrictModel):

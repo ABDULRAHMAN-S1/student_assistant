@@ -70,6 +70,10 @@ def init_database() -> None:
                 language TEXT NOT NULL,
                 sources_json TEXT NOT NULL,
                 created_at TEXT NOT NULL,
+                reason TEXT NOT NULL DEFAULT '',
+                route_mode TEXT NOT NULL DEFAULT '',
+                question_text TEXT NOT NULL DEFAULT '',
+                answer_text TEXT NOT NULL DEFAULT '',
                 FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
             );
 
@@ -89,6 +93,19 @@ def init_database() -> None:
             connection.execute(
                 "ALTER TABLE users ADD COLUMN role TEXT NOT NULL DEFAULT 'student'"
             )
+
+        feedback_columns = {
+            row["name"]
+            for row in connection.execute("PRAGMA table_info(feedback_events)").fetchall()
+        }
+        for col, definition in [
+            ("reason", "TEXT NOT NULL DEFAULT ''"),
+            ("route_mode", "TEXT NOT NULL DEFAULT ''"),
+            ("question_text", "TEXT NOT NULL DEFAULT ''"),
+            ("answer_text", "TEXT NOT NULL DEFAULT ''"),
+        ]:
+            if col not in feedback_columns:
+                connection.execute(f"ALTER TABLE feedback_events ADD COLUMN {col} {definition}")
 
 
 def fetch_user_by_email(email: str) -> dict[str, Any] | None:
@@ -192,12 +209,15 @@ def is_refresh_token_active(token: str) -> bool:
     return row["expires_at"] > utc_now().isoformat()
 
 
-def insert_feedback(*, feedback_id: str, user_id: str, question: str, answer: str, helpful: bool, language: str, sources: list[dict[str, Any]]) -> None:
+def insert_feedback(*, feedback_id: str, user_id: str, question: str, answer: str, helpful: bool, language: str, sources: list[dict[str, Any]], reason: str = "", route_mode: str = "") -> None:
+    # Only store plaintext question/answer when helpful is False (privacy).
+    store_question = question.strip() if not helpful else ""
+    store_answer = answer.strip() if not helpful else ""
     with connection_scope() as connection:
         connection.execute(
             """
-            INSERT INTO feedback_events (id, user_id, question_hash, answer_hash, helpful, language, sources_json, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO feedback_events (id, user_id, question_hash, answer_hash, helpful, language, sources_json, created_at, reason, route_mode, question_text, answer_text)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 feedback_id,
@@ -208,6 +228,10 @@ def insert_feedback(*, feedback_id: str, user_id: str, question: str, answer: st
                 language,
                 json.dumps(sources, ensure_ascii=False),
                 _timestamp(),
+                reason,
+                route_mode,
+                store_question,
+                store_answer,
             ),
         )
 

@@ -61,7 +61,7 @@ except ImportError:
 
 FALLBACK_AR = "لم أجد إجابة صريحة في المصادر الجامعية المعتمدة."
 FALLBACK_EN = "I could not find an explicit answer in the available university-approved sources."
-UNCLEAR_AR = "النص المسترجع غير واضح في هذه النقطة."
+UNCLEAR_AR = "المعلومات المتاحة غير واضحة في هذه النقطة."
 UNCLEAR_EN = "The retrieved text is unclear on this point."
 ARABIC_GENERATION_PROMPT = """تعليمات بناء الإجابة:
 - أجب مباشرة وباختصار.
@@ -857,21 +857,19 @@ def list_like_intro(question: str, *, item_count: int, contexts: list[dict[str, 
             return "من الشروط التي وردت في دليل القبول الجامعي"
 
     if kind == "penalties" and penalty_question_domain(question) == "cheating":
-        return "من العقوبات المذكورة للغش أو محاولته في النص المسترجع"
+        return "من العقوبات المذكورة للغش أو محاولته وفق اللائحة"
 
     partial_intro = {
-        "conditions": "من الشروط التي ظهرت في النصوص المسترجعة",
-        "rules": "من الضوابط المذكورة في النصوص المسترجعة",
-        "steps": "من الخطوات المذكورة في النص المسترجع",
-        "penalties": "من العقوبات المذكورة في النص المسترجع",
-        "cases": "من الحالات المذكورة في النص المسترجع",
-        "policy": "من الضوابط التي وردت في النصوص المسترجعة",
-        "system": "من التقديرات المذكورة في النصوص المسترجعة"
+        "conditions": "من الشروط التي وردت في اللائحة",
+        "rules": "من الضوابط المذكورة في اللائحة",
+        "steps": "من الخطوات المذكورة في اللائحة",
+        "penalties": "من العقوبات المذكورة في اللائحة",
+        "cases": "من الحالات المذكورة في اللائحة",
+        "policy": "من الضوابط التي وردت في اللائحة",
+        "system": "من التقديرات المذكورة في اللائحة"
         if "تقدير" in normalized_question
-        else "من البنود المذكورة في النصوص المسترجعة",
-    }.get(kind, "وفق النص المسترجع، ورد")
-    if item_count <= 1 and partial_intro.endswith("النصوص المسترجعة"):
-        partial_intro = partial_intro.replace("النصوص المسترجعة", "النص المسترجع")
+        else "من البنود المذكورة في اللائحة",
+    }.get(kind, "وفق اللائحة، ورد")
     scope_hint = infer_context_scope_hint(question, contexts or [])
     if scope_hint:
         return f"{partial_intro} {scope_hint}".strip()
@@ -3130,7 +3128,9 @@ def format_arabic_direct_answer(question: str, answer: str, contexts: list[dict[
 def polish_arabic_answer_text(text: str) -> str:
     cleaned = CLAUSE_NUMBER_PATTERN.sub("", (text or "").strip())
     cleaned = re.sub(r"^(?:ج|الجواب)\s*[:：]\s*", "", cleaned)
-    cleaned = cleaned.replace("ويذكر النص المسترجع من هذه العقوبات:", "ومن العقوبات المذكورة في النص:")
+    cleaned = cleaned.replace("ويذكر النص المسترجع من هذه العقوبات:", "ومن العقوبات المذكورة في اللائحة:")
+    cleaned = re.sub(r"في النص(?:وص)? المسترجع(?:ة|ه)?", "في اللائحة", cleaned)
+    cleaned = re.sub(r"النص(?:وص)? المسترجع(?:ة|ه)?", "اللائحة", cleaned)
     cleaned = cleaned.replace(
         "عقوبة الغش أو محاولته مقصورة على إحدى العقوبات من البند 7 إلى البند 15:",
         "عقوبة الغش أو محاولته تقتصر على العقوبات الواردة من البند 7 إلى البند 15.",
@@ -3946,7 +3946,7 @@ class ChatService:
                 fallback_reason=fallback_reason,
                 answer=answer,
             )
-            return self.formatter.build_response(original_question, language, answer, [])
+            return self.formatter.build_response(original_question, language, answer, [], route_mode=route.mode)
 
         direct_arabic_answer, used_contexts, unclear = self.compose_arabic_response_fn(working_question, filtered_contexts)
         answer_state = AnswerComputation(
@@ -3998,7 +3998,7 @@ class ChatService:
             answer=answer,
         )
 
-        return self.formatter.build_response(original_question, language, answer, sources)
+        return self.formatter.build_response(original_question, language, answer, sources, route_mode=route.mode)
 
 
 chat_service = ChatService(router=question_router, fallback_service=fallback_service, formatter=formatter)

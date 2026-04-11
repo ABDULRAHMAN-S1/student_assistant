@@ -77,6 +77,8 @@ class AssistantApiClient {
     required bool helpful,
     required String language,
     required List<RegulationSource> sources,
+    String reason = '',
+    String routeMode = '',
   }) async {
     await _postAuthorized(
       '/feedback',
@@ -86,6 +88,8 @@ class AssistantApiClient {
         'helpful': helpful,
         'language': language,
         'sources': sources.map((item) => item.toJson()).toList(growable: false),
+        'reason': reason,
+        'route_mode': routeMode,
       },
     );
   }

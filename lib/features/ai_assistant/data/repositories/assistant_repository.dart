@@ -25,6 +25,8 @@ class AssistantRepository {
     required bool helpful,
     required String language,
     required List<RegulationSource> sources,
+    String reason = '',
+    String routeMode = '',
   }) {
     return _apiClient.sendFeedback(
       question: question,
@@ -32,6 +34,8 @@ class AssistantRepository {
       helpful: helpful,
       language: language,
       sources: sources,
+      reason: reason,
+      routeMode: routeMode,
     );
   }
 }

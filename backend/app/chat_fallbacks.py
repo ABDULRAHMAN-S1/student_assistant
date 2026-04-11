@@ -392,6 +392,8 @@ class FallbackService:
                 )
             ):
                 continue
+            if any(term in haystack for term in ("سكن", "اسكان", "الاسكان")) and "غش" not in haystack:
+                continue
 
             score = 1.0
             if "الاختبار النهايي" in haystack:

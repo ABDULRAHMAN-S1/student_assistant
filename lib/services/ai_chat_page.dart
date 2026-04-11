@@ -536,6 +536,7 @@ class _AIChatPageState extends State<AIChatPage> {
     List<RegulationSource> sources = const [],
     bool canFeedback = false,
     bool canTranslate = false,
+    String routeMode = '',
   }) {
     setState(() {
       _messages.add(
@@ -546,6 +547,7 @@ class _AIChatPageState extends State<AIChatPage> {
           sources: sources,
           canFeedback: canFeedback,
           canTranslate: canTranslate,
+          routeMode: routeMode,
         ),
       );
     });
@@ -618,6 +620,7 @@ class _AIChatPageState extends State<AIChatPage> {
         sources: response.sources,
         canFeedback: response.sources.isNotEmpty,
         canTranslate: true,
+        routeMode: response.routeMode,
       );
     } on AssistantApiException catch (error) {
       if (!mounted) return;
@@ -1073,12 +1076,72 @@ class _AIChatPageState extends State<AIChatPage> {
     return '';
   }
 
+  Future<String?> _showFeedbackReasonSheet() {
+    final reasons = widget.isArabic
+        ? ['الإجابة غير دقيقة', 'لم تجب على سؤالي', 'الإجابة غير واضحة']
+        : ['Inaccurate answer', "Didn't answer my question", 'Unclear answer'];
+
+    return showModalBottomSheet<String>(
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (context) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 16),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  child: Text(
+                    widget.isArabic ? 'ما السبب؟' : 'What went wrong?',
+                    style: const TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                for (final reason in reasons)
+                  ListTile(
+                    dense: true,
+                    title: Text(reason),
+                    onTap: () => Navigator.pop(context, reason),
+                  ),
+                const Divider(height: 1),
+                ListTile(
+                  dense: true,
+                  title: Text(
+                    widget.isArabic ? 'تخطي' : 'Skip',
+                    style: TextStyle(color: Colors.grey.shade600),
+                  ),
+                  onTap: () => Navigator.pop(context, ''),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
   Future<void> _submitFeedback(ChatMessage message, bool helpful) async {
     if (!message.canFeedback) return;
 
     final messageIndex = _resolveMessageIndex(message);
     if (messageIndex < 0) return;
     if (!_ensureBackendAvailable()) return;
+
+    String reason = '';
+    if (!helpful) {
+      final selected = await _showFeedbackReasonSheet();
+      if (!mounted) return;
+      if (selected == null) return; // dismissed without choosing
+      reason = selected;
+    }
+
     final previousHelpful = message.helpful;
 
     setState(() {
@@ -1093,7 +1156,21 @@ class _AIChatPageState extends State<AIChatPage> {
         helpful: helpful,
         language: widget.isArabic ? 'ar' : 'en',
         sources: message.sources,
+        reason: reason,
+        routeMode: message.routeMode,
       );
+      if (!helpful && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              widget.isArabic
+                  ? 'شكراً، ملاحظتك تساعدنا على التحسين'
+                  : 'Thanks, your feedback helps us improve',
+            ),
+            duration: const Duration(seconds: 2),
+          ),
+        );
+      }
     } on AssistantApiException catch (error) {
       if (!mounted) return;
 

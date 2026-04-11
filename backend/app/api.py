@@ -325,6 +325,8 @@ def feedback(
     question = trim_required_text(request.question, field_name="question")
     answer = trim_required_text(request.answer, field_name="answer")
     language = (request.language or "").strip()
+    reason = (request.reason or "").strip()
+    route_mode = (request.route_mode or "").strip()
     insert_feedback(
         feedback_id=uuid4().hex,
         user_id=current_user.user_id,
@@ -333,6 +335,8 @@ def feedback(
         helpful=request.helpful,
         language=language,
         sources=request.sources,
+        reason=reason,
+        route_mode=route_mode,
     )
 
     return {"status": "ok"}

@@ -12,6 +12,7 @@ class ChatMessage {
     this.translatedText,
     this.isShowingTranslation = false,
     this.isTranslating = false,
+    this.routeMode = '',
   });
 
   final String text;
@@ -24,6 +25,7 @@ class ChatMessage {
   final String? translatedText;
   final bool isShowingTranslation;
   final bool isTranslating;
+  final String routeMode;
 
   static const Object _unset = Object();
 
@@ -38,6 +40,7 @@ class ChatMessage {
     Object? translatedText = _unset,
     bool? isShowingTranslation,
     bool? isTranslating,
+    String? routeMode,
   }) {
     return ChatMessage(
       text: text ?? this.text,
@@ -52,6 +55,7 @@ class ChatMessage {
           : translatedText as String?,
       isShowingTranslation: isShowingTranslation ?? this.isShowingTranslation,
       isTranslating: isTranslating ?? this.isTranslating,
+      routeMode: routeMode ?? this.routeMode,
     );
   }
 
@@ -69,6 +73,7 @@ class ChatMessage {
       'translatedText': translatedText,
       'isShowingTranslation': isShowingTranslation,
       'isTranslating': isTranslating,
+      'routeMode': routeMode,
     };
   }
 
@@ -88,6 +93,7 @@ class ChatMessage {
           : (map['translatedText'] ?? '').toString(),
       isShowingTranslation: map['isShowingTranslation'] == true,
       isTranslating: false,
+      routeMode: (map['routeMode'] ?? '').toString(),
     );
   }
 }

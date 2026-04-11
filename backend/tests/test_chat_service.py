@@ -89,12 +89,13 @@ class RecordingFormatter:
         self.build_sources_calls.append((question, source_contexts, language, context))
         return [{"id": item["id"], "content": item.get("content", "")} for item in source_contexts]
 
-    def build_response(self, question: str, language: str, answer: str, sources: list[dict[str, Any]]) -> dict[str, Any]:
+    def build_response(self, question: str, language: str, answer: str, sources: list[dict[str, Any]], *, route_mode: str = "") -> dict[str, Any]:
         return {
             "question": question,
             "language": language,
             "answer": answer,
             "sources": sources,
+            "route_mode": route_mode,
         }
 
 

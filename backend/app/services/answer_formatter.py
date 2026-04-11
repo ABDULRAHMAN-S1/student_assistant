@@ -382,10 +382,12 @@ class AnswerFormatterService:
         language: str,
         answer: str,
         sources: list[dict[str, Any]],
+        route_mode: str = "",
     ) -> dict[str, Any]:
         return {
             "question": question,
             "language": language,
             "answer": answer,
             "sources": sources,
+            "route_mode": route_mode,
         }
