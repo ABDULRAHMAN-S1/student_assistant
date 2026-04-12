@@ -10,7 +10,24 @@ from functools import lru_cache
 from typing import Any
 
 try:
+    from app.answer_item_parsing_utils import (
+        LIST_ITEM_PATTERN,
+        anchored_block_indices,
+        build_answer_item_text,
+        is_heading_like_line,
+        is_rule_like_line,
+        normalize_answer_item,
+        strip_list_marker,
+    )
+    from app.answer_item_extraction_utils import (
+        filter_items_for_question_kind,
+        extract_context_answer_items,
+        extract_snippet,
+    )
     from app.chat_fallbacks import FallbackService
+    from app.context_cleaning_utils import build_removable_metadata_lines, clean_context_lines
+    from app.context_scoring_utils import context_answer_score, score_line
+    from app.question_analysis_utils import build_question_stems, explicit_source_type_preference, infer_context_scope_hint, list_like_question_kind
     from app.record_index import iter_candidate_records
     from app.reference_utils import normalize_reference_digits as shared_normalize_reference_digits
     from app.reference_utils import parse_reference_order as shared_parse_reference_order
@@ -33,8 +50,36 @@ try:
         tokenize_text,
     )
     from app.translation_service import translate_text
+    from app.status_code_utils import (
+        STATUS_CODE_ARABIC_MEANINGS,
+        STATUS_CODE_ENGLISH_MEANINGS,
+        STATUS_CODE_LINE_PATTERN,
+        extract_status_code_description_from_text,
+        extract_status_code_meaning_from_text,
+        extract_status_code_terms,
+        is_status_code_query,
+        select_minimal_status_code_contexts,
+        status_code_context_article_matches,
+    )
 except ImportError:
+    from answer_item_parsing_utils import (  # type: ignore
+        LIST_ITEM_PATTERN,
+        anchored_block_indices,
+        build_answer_item_text,
+        is_heading_like_line,
+        is_rule_like_line,
+        normalize_answer_item,
+        strip_list_marker,
+    )
+    from answer_item_extraction_utils import (  # type: ignore
+        filter_items_for_question_kind,
+        extract_context_answer_items,
+        extract_snippet,
+    )
     from chat_fallbacks import FallbackService  # type: ignore
+    from context_cleaning_utils import build_removable_metadata_lines, clean_context_lines  # type: ignore
+    from context_scoring_utils import context_answer_score, score_line  # type: ignore
+    from question_analysis_utils import build_question_stems, explicit_source_type_preference, infer_context_scope_hint, list_like_question_kind  # type: ignore
     from record_index import iter_candidate_records  # type: ignore
     from reference_utils import normalize_reference_digits as shared_normalize_reference_digits  # type: ignore
     from reference_utils import parse_reference_order as shared_parse_reference_order  # type: ignore
@@ -57,6 +102,17 @@ except ImportError:
         tokenize_text,
     )
     from translation_service import translate_text  # type: ignore
+    from status_code_utils import (  # type: ignore
+        STATUS_CODE_ARABIC_MEANINGS,
+        STATUS_CODE_ENGLISH_MEANINGS,
+        STATUS_CODE_LINE_PATTERN,
+        extract_status_code_description_from_text,
+        extract_status_code_meaning_from_text,
+        extract_status_code_terms,
+        is_status_code_query,
+        select_minimal_status_code_contexts,
+        status_code_context_article_matches,
+    )
 
 
 FALLBACK_AR = "لم أجد إجابة صريحة في المصادر الجامعية المعتمدة."
@@ -79,30 +135,6 @@ ENGLISH_GENERATION_PROMPT = """Answering rules:
 """
 ARABIC_OUTPUT_TEMPLATE = "{direct_answer}\nالمصدر المعتمد: {reference}"
 ENGLISH_OUTPUT_TEMPLATE = "{direct_answer}\nOfficial source: {reference}"
-ARABIC_STOPWORDS = {
-    "هل",
-    "ما",
-    "ماذا",
-    "متى",
-    "كيف",
-    "اذا",
-    "إذا",
-    "في",
-    "من",
-    "على",
-    "عن",
-    "الى",
-    "إلى",
-    "مع",
-    "داخل",
-    "خلال",
-    "بعد",
-    "قبل",
-    "يمكن",
-    "استطيع",
-    "أستطيع",
-    "يحدث",
-}
 YES_NO_PATTERN_EN = re.compile(r"^(can|is|are|do|does|did|will|may|should)\b", re.IGNORECASE)
 POSITIVE_AR = ("يجوز", "يسمح", "يحق")
 NEGATIVE_AR = ("لا يسمح", "لا يجوز", "عدم", "محظور", "ممنوع")
@@ -122,22 +154,6 @@ SOURCE_TYPE_LABELS_EN = {
     "guide": "Guide",
     "faq": "FAQ",
 }
-STATUS_CODE_ENGLISH_MEANINGS = {
-    "DN": "Deprived from final exam",
-    "IC": "Incomplete",
-    "NP": "Pass without grade",
-    "W": "Withdrawn with excuse",
-}
-STATUS_CODE_ARABIC_MEANINGS = {
-    "DN": "محروم من الاختبار النهائي",
-    "IC": "غير مكتمل",
-    "NP": "ناجح دون تقدير",
-    "W": "منسحب بعذر",
-}
-LIST_ITEM_PATTERN = re.compile(
-    r"^(?:[-•▪]|[\d٠-٩]+(?:\s*[-–]\s*[\d٠-٩]+)?[\.\):：،-]?|[أ-ي][\.\):：،-])\s*"
-)
-STATUS_CODE_LINE_PATTERN = re.compile(r"\s*=\s*")
 STRICT_ROUTE_MODES = {
     "attendance_penalty",
     "housing_conditions",
@@ -280,9 +296,9 @@ def emit_chat_diagnostics(
 ) -> None:
     payload: dict[str, Any] = {
         "stage": stage,
-        "original_question": original_question,
-        "working_question": working_question,
-        "normalized_query": normalized_query,
+        "original_question_len": len((original_question or "").strip()),
+        "working_question_len": len((working_question or "").strip()),
+        "normalized_query_len": len((normalized_query or "").strip()),
         "language": language,
         "route": {
             "mode": route.mode,
@@ -311,7 +327,7 @@ def emit_chat_diagnostics(
     if fallback_reason:
         payload["fallback_reason"] = fallback_reason
     if answer:
-        payload["answer_preview"] = truncate_text(answer, 240)
+        payload["answer_len"] = len(answer.strip())
 
     logger.info("chat_diagnostics %s", json.dumps(payload, ensure_ascii=False))
 
@@ -733,57 +749,6 @@ def strip_leading_connector(text: str) -> str:
     return re.sub(r"^(لكن|كما|وإذا|واذا)\s+", "", (text or "").strip())
 
 
-def build_question_stems(question: str, language: str) -> list[str]:
-    if language != "ar":
-        return []
-
-    stems: list[str] = []
-    seen: set[str] = set()
-    for token in tokenize_text(question):
-        if token in ARABIC_STOPWORDS or len(token) < 2:
-            continue
-        stem = light_stem(token)
-        if len(stem) < 2 or stem in seen:
-            continue
-        seen.add(stem)
-        stems.append(stem)
-    return stems
-
-
-def explicit_source_type_preference(question: str) -> str | None:
-    normalized_question = normalize_for_matching(question)
-    if "سياس" in normalized_question:
-        return "policy"
-    if "دليل" in normalized_question:
-        return "guide"
-    if "اسئله شائعه" in normalized_question or "faq" in normalized_question:
-        return "faq"
-    if "تقدير" in normalized_question:
-        return "regulation"
-    if "لائح" in normalized_question:
-        return "regulation"
-    return None
-
-
-def list_like_question_kind(question: str) -> str | None:
-    normalized_question = normalize_for_matching(question)
-    if any(term in normalized_question for term in ("شروط", "متطلبات")):
-        return "conditions"
-    if "ضوابط" in normalized_question:
-        return "rules"
-    if "خطوات" in normalized_question:
-        return "steps"
-    if "عقوب" in normalized_question:
-        return "penalties"
-    if "حالات" in normalized_question or normalized_question.startswith("متي") or " متي " in f" {normalized_question} ":
-        return "cases"
-    if "سياس" in normalized_question:
-        return "policy"
-    if "تقدير" in normalized_question or "سلم" in normalized_question or "نظام" in normalized_question:
-        return "system"
-    return None
-
-
 def penalty_question_domain(question: str) -> str | None:
     return question_router.penalty_question_domain(question)
 
@@ -794,46 +759,6 @@ def is_gpa_formula_question(question: str) -> bool:
 
 def is_admission_conditions_question(question: str) -> bool:
     return question_router.is_admission_conditions_question(question)
-
-
-def infer_context_scope_hint(question: str, contexts: list[dict[str, Any]]) -> str:
-    if not contexts:
-        return ""
-
-    normalized_question = normalize_for_matching(question)
-    context_texts = [
-        normalize_for_matching(
-            " ".join(
-                part
-                for part in (
-                    context.get("metadata", {}).get("section", ""),
-                    context.get("metadata", {}).get("article", ""),
-                    context.get("metadata", {}).get("document_title", ""),
-                )
-                if part
-            )
-        )
-        for context in contexts[:4]
-    ]
-    context_texts = [text for text in context_texts if text]
-    if not context_texts:
-        return ""
-
-    scope_markers = (
-        (("الإسكان الطلابي", "الاسكان الطلابي", "السكن الجامعي", "السكن"), "فيما يتعلق بالإسكان الطلابي"),
-        (("المقررات العامة والاختيارية",), "فيما يتعلق بالمقررات العامة والاختيارية"),
-        (("التقديرات", "المعدل"), "فيما يتعلق بالتقديرات والمعدل"),
-        (("الحضور", "الغياب", "الحرمان"), "فيما يتعلق بالحضور والغياب"),
-    )
-
-    minimum_hits = 2 if len(context_texts) >= 2 else 1
-    for markers, label in scope_markers:
-        if any(marker in normalized_question for marker in markers):
-            continue
-        hit_count = sum(1 for text in context_texts if any(marker in text for marker in markers))
-        if hit_count >= minimum_hits:
-            return label
-    return ""
 
 
 def list_like_intro(question: str, *, item_count: int, contexts: list[dict[str, Any]] | None = None) -> str:
@@ -876,164 +801,9 @@ def list_like_intro(question: str, *, item_count: int, contexts: list[dict[str, 
     return partial_intro
 
 
-def filter_items_for_question_kind(question: str, items: list[str]) -> list[str]:
-    kind = list_like_question_kind(question)
-    if kind is None:
-        return items
-
-    filtered: list[str] = []
-    for item in items:
-        normalized = normalize_for_matching(item)
-        if not normalized:
-            continue
-
-        keep = True
-        if "الصفحه" in normalized:
-            keep = False
-        elif kind == "conditions":
-            keep = any(
-                term in normalized
-                for term in (
-                    "الا ",
-                    "ان يكون",
-                    "عدم ",
-                    "استكمال",
-                    "حصول",
-                    "انتظام",
-                    "غير مرتبط",
-                    "اجراءات",
-                    "المستندات",
-                )
-            )
-        elif kind == "penalties":
-            keep = not normalized.endswith(":") and "العقوبات التبعية" not in normalized and any(
-                term in normalized
-                for term in (
-                    "حرمان",
-                    "راسب",
-                    "الفصل من الجامعه",
-                    "الفصل النهايي",
-                    "تنبيه شفهي",
-                    "تعهد كتابي",
-                    "رفع المخالفه",
-                )
-            )
-            if keep and penalty_question_domain(question) == "cheating":
-                if any(term in normalized for term in ("سكن", "اسكان", "الاسكان", "الاقامه")) and not any(
-                    term in normalized for term in ("غش", "اختبار")
-                ):
-                    keep = False
-                normalized_q = normalize_for_matching(question)
-                if keep and any(term in normalized_q for term in ("الاختبار", "اختبار")):
-                    if any(term in normalized for term in ("العمل", "البحث", "التقرير", "الواجب")) and not any(
-                        term in normalized for term in ("الاختبار", "اختبار")
-                    ):
-                        keep = False
-        elif kind in {"rules", "policy"}:
-            if any(
-                term in normalized
-                for term in (
-                    "نموذج",
-                    "اقر انا",
-                    "توقيع",
-                    "الحقول",
-                    "الرقم الجامعي",
-                )
-            ):
-                keep = False
-            else:
-                keep = any(
-                    term in normalized
-                    for term in (
-                        "لا يحق",
-                        "لا يجوز",
-                        "يجوز",
-                        "يلزم",
-                        "يلتزم",
-                        "تلتزم",
-                        "اولوية",
-                        "الحد الاعلي",
-                        "منع",
-                        "التنقل",
-                        "التاكد",
-                        "تخصيص",
-                        "ضبط",
-                        "النمط",
-                        "المصدر",
-                        "صلاحيات",
-                        "شعب",
-                        "حضور المقرر الحر",
-                        "ارتداء",
-                        "ملابس",
-                        "اكسسوارات",
-                        "رسومات",
-                        "شعارات",
-                        "الشورت",
-                        "المظهر العام",
-                        "الجهه المسووله",
-                        "مسووليه",
-                        "تتولي",
-                        "تحال",
-                        "لجنه التحقيق",
-                        "لجنه",
-                        "تاديب الطلاب",
-                    )
-                )
-        elif kind == "system":
-            keep = any(
-                term in normalized
-                for term in (
-                    "النسبه المئويه",
-                    "نقاط التقدير",
-                    "الوزن",
-                    "ممتاز",
-                    "جيد",
-                    "مقبول",
-                    "راسب",
-                    "dn",
-                    "ic",
-                    "np",
-                    "ip",
-                    "w",
-                )
-            )
-
-        if keep:
-            filtered.append(item)
-
-    if filtered:
-        return filtered
-    if kind in {"penalties", "policy", "rules", "system"}:
-        return []
-    return items
-
-
-def extract_status_code_terms(question: str) -> list[str]:
-    seen: set[str] = set()
-    codes: list[str] = []
-    for token in tokenize_text(question):
-        if token in STATUS_CODE_TOKENS and token not in seen:
-            seen.add(token)
-            codes.append(token)
-    return codes
-
-
-def is_status_code_query(question: str) -> bool:
-    query_profile = build_query_profile(question)
-    codes = extract_status_code_terms(question)
-    return is_code_style_query(query_profile, codes)
-
-
 def status_code_context_exact_matches(context: dict[str, Any], codes: list[str]) -> set[str]:
     haystack = f" {context_search_text(context)} "
     return {code for code in codes if f" {code} " in haystack}
-
-
-def status_code_context_article_matches(context: dict[str, Any], codes: list[str]) -> set[str]:
-    article_text = normalize_for_matching(context.get("metadata", {}).get("article", ""))
-    if not article_text:
-        return set()
-    return {code for code in codes if article_text == code or article_text.startswith(f"{code} ")}
 
 
 def status_code_context_definition_matches(context: dict[str, Any], codes: list[str]) -> set[str]:
@@ -1098,34 +868,6 @@ def status_code_context_details(context: dict[str, Any], codes: list[str]) -> di
         "selection_score": score,
         "source_key": status_code_source_key(context),
     }
-
-
-def select_minimal_status_code_contexts(
-    details_list: list[dict[str, Any]],
-    codes: list[str],
-    *,
-    max_items: int,
-) -> tuple[list[dict[str, Any]], set[str], int]:
-    remaining = set(codes)
-    selected: list[dict[str, Any]] = []
-    definition_coverage: set[str] = set()
-
-    for details in details_list:
-        new_codes = details["exact_matches"] & remaining
-        if not new_codes and selected:
-            continue
-        if not details["exact_matches"] and not details["definition_matches"]:
-            continue
-
-        selected.append(details["context"])
-        remaining -= new_codes
-        definition_coverage |= details["definition_matches"]
-
-        if not remaining or len(selected) >= max_items:
-            break
-
-    covered = set(codes) - remaining
-    return selected, covered, len(definition_coverage)
 
 
 def select_status_code_contexts(
@@ -1231,83 +973,6 @@ def select_status_code_contexts(
     for summary in selected_groups:
         flattened_contexts.extend(summary["contexts"])
     return dedupe_preserve_order_contexts(flattened_contexts)[:max_items]
-
-
-def build_removable_metadata_lines(metadata: dict[str, Any]) -> set[str]:
-    removable: set[str] = set()
-    for value in (
-        metadata.get("article", ""),
-        metadata.get("document_title", ""),
-        metadata.get("title", ""),
-    ):
-        normalized = normalize_for_matching(value)
-        if normalized:
-            removable.add(normalized)
-
-    section = metadata.get("section", "")
-    for part in section.split(">"):
-        normalized = normalize_for_matching(part.strip())
-        if normalized:
-            removable.add(normalized)
-
-    return removable
-
-
-def clean_context_lines(context: dict[str, Any]) -> list[str]:
-    metadata = context.get("metadata", {})
-    removable = build_removable_metadata_lines(metadata)
-    lines = []
-    previous = ""
-    for raw_line in context.get("content", "").splitlines():
-        line = raw_line.strip()
-        if not line:
-            continue
-        normalized = normalize_for_matching(line)
-        if normalized in removable and normalized:
-            continue
-        if normalized == previous:
-            continue
-        previous = normalized
-        lines.append(line)
-    return lines
-
-
-def score_line(line: str, question_stems: list[str]) -> float:
-    normalized_line = normalize_for_matching(line)
-    line_stems = {light_stem(token) for token in tokenize_text(line)}
-    overlap = sum(1 for stem in question_stems if stem in line_stems)
-    score = float(overlap)
-
-    if any(marker in normalized_line for marker in ("لا يسمح", "لا يجوز", "يجوز", "يسمح", "يحق")):
-        score += 0.8
-    if line.startswith(("المادة", "البند", "1.", "2.", "3.", "4.", "5.", "6.", "7.", "8.", "9.")):
-        score += 0.2
-    if "[غير واضح في المصدر]" in line:
-        score -= 0.5
-    return score
-
-
-def context_answer_score(context: dict[str, Any], question_stems: list[str], language: str) -> float:
-    base_score = float(context.get("score", 0.0))
-    if language != "ar":
-        return base_score
-
-    metadata = context.get("metadata", {})
-    doc_type = context_source_type(context)
-    metadata_text = " ".join(
-        value for value in (metadata.get("article", ""), metadata.get("section", ""), metadata.get("title", "")) if value
-    )
-    metadata_stems = {light_stem(token) for token in tokenize_text(metadata_text)}
-    metadata_overlap = sum(1 for stem in question_stems if stem in metadata_stems)
-
-    best_line_score = 0.0
-    for line in clean_context_lines(context):
-        best_line_score = max(best_line_score, score_line(line, question_stems))
-
-    if metadata.get("status") == "partial":
-        base_score -= 0.08
-
-    return (base_score * 2.2) + best_line_score + (metadata_overlap * 0.9) + (0.15 * source_priority(doc_type))
 
 
 def build_query_profile_for_answer(question: str, language: str) -> dict[str, Any]:
@@ -1524,327 +1189,8 @@ def augment_contexts_for_route(
     elif route.mode == "penalty":
         add_fallback("penalty", limit=4)
 
-    if route.fallback_mode == "attendance" or route.is_attendance_limit or route.mode == "attendance_penalty":
-        add_fallback("attendance_limit", limit=4)
 
-    if list_like_question_kind(question) == "system" and "تقدير" in normalize_for_matching(question):
-        add_fallback("grading_system", limit=6)
-
-    return augmented
-
-
-def filter_contexts_for_generation(
-    question: str,
-    contexts: list[dict[str, Any]],
-    language: str,
-    *,
-    route: RouteDecision,
-    fallback_service: FallbackService,
-) -> list[dict[str, Any]]:
-    if not contexts:
-        return []
-
-    contexts = filter_weak_contexts(dedupe_preserve_order_contexts(contexts))
-    contexts = augment_contexts_for_route(
-        question,
-        contexts,
-        language,
-        route=route,
-        fallback_service=fallback_service,
-    )
-    search_text = fallback_service.context_search_text
-    asks_upper_limit_fn = fallback_service.asks_upper_limit
-    asks_lower_limit_fn = fallback_service.asks_lower_limit
-    mode = route.mode
-    if language == "ar" and mode_requires_strict_context_match(mode):
-        contexts = filter_contexts_by_route_mode(contexts, mode)
-        if not contexts:
-            return []
-
-    if language == "ar":
-        if mode == "missed_final":
-            mode_contexts = rank_contexts_by_terms(
-                contexts,
-                include_any=("غبت", "غاب", "غايب", "يغيب", "صفر", "اختبار بديل"),
-                prefer_article=("المادة الحادية والثلاثون", "المادة الثانية والثلاثون"),
-            )[:3]
-            if mode_contexts:
-                return dedupe_preserve_order_contexts(mode_contexts)
-        if mode == "withdrawal":
-            mode_contexts = rank_contexts_by_terms(
-                contexts,
-                include_any=("يجوز", "طلب الانسحاب", "الانسحاب من المقرر", "لا يسمح"),
-                prefer_article=("المادة السابعة عشرة", "البند 1", "البند 2", "البند 3"),
-            )[:4]
-            if mode_contexts:
-                return dedupe_preserve_order_contexts(mode_contexts)
-        if route.fallback_mode == "attendance":
-            attendance_pool = contexts
-            question_terms = fallback_service.attendance_query_terms(question)
-            scored_attendance_contexts = [
-                (fallback_service.context_attendance_match_count(context, question_terms), context)
-                for context in attendance_pool
-            ]
-            best_match_count = max((score for score, _ in scored_attendance_contexts), default=0)
-            attendance_contexts = [
-                context
-                for score, context in scored_attendance_contexts
-                if score > 0 and score == best_match_count
-            ]
-            if not attendance_contexts:
-                return []
-            contexts = attendance_contexts
-        if route.is_attendance_limit:
-            mode_contexts = [
-                context
-                for context in rank_contexts_by_terms(
-                    contexts,
-                    include_any=("نسبه الحضور", "حضور", "حرمان", "الاختبار النهائي"),
-                    prefer_article=("البند 1", "المادة الخامسة عشرة", "الحرمان"),
-                )
-                if any(term in search_text(context) for term in ("نسبه الحضور", "حضور", "حرمان"))
-            ][:3]
-            if mode_contexts:
-                return dedupe_preserve_order_contexts(mode_contexts)
-        if mode == "attendance_penalty":
-            attendance_pool = contexts
-            attendance_contexts = [
-                context
-                for context in attendance_pool
-                if any(term in search_text(context) for term in ("الحرمان", "حضور", "الاختبار النهائي"))
-                and "السلوك والانضباط" not in search_text(context)
-                and "الاسكان" not in search_text(context)
-            ]
-            mode_contexts = [
-                context
-                for context in (
-                    pick_context(
-                        attendance_contexts,
-                        article_terms=("الحرمان",),
-                        include_any=("دخول الاختبار النهائي", "الحضور", "الحرمان"),
-                    ),
-                    pick_context(
-                        attendance_contexts,
-                        article_terms=("المادة الخامسة عشرة", "البند 1"),
-                        include_any=("رفع الحرمان", "الحضور", "الاختبار النهائي", "عذر"),
-                    ),
-                    pick_context(
-                        attendance_contexts,
-                        article_terms=("البند 3",),
-                        include_any=("غائب بعذر", "الحرمان"),
-                    ),
-                )
-                if context is not None
-            ]
-            if not mode_contexts:
-                mode_contexts = [
-                    context
-                    for context in rank_contexts_by_terms(
-                        attendance_contexts,
-                        include_any=("الحرمان", "حضور", "الاختبار النهائي", "رفع الحرمان", "عذر"),
-                        prefer_article=("الحرمان", "المادة الخامسة عشرة", "البند 1"),
-                    )
-                ][:3]
-            if mode_contexts:
-                return dedupe_preserve_order_contexts(mode_contexts)
-        if mode == "housing_conditions":
-            housing_pool = contexts
-            housing_contexts = [
-                context
-                for context in rank_contexts_by_terms(
-                    housing_pool,
-                    include_any=("شروط القبول بالإسكان الطلابي", "الاسكان", "السكن", "قبول", "غير مرتبطين", "استكمال", "انتظامهم"),
-                    prefer_article=("البند 1", "البند 2", "البند 3", "البند 4"),
-                )
-                if "شروط القبول بالاسكان الطلابي" in search_text(context)
-            ][:4]
-            if housing_contexts:
-                return dedupe_preserve_order_contexts(housing_contexts)
-        if mode == "admission_conditions":
-            admission_pool = [
-                context
-                for context in dedupe_preserve_order_contexts(contexts)
-                if not any(term in search_text(context) for term in ("شروط القبول بالاسكان الطلابي", "الاسكان", "السكن"))
-            ]
-            guide_contexts = [context for context in admission_pool if context_source_type(context) == "guide"]
-            admission_contexts = [
-                context
-                for context in rank_contexts_by_terms(
-                    guide_contexts or admission_pool,
-                    include_any=("شروط الترشيح", "القبول", "الثانويه", "القدرات", "التحصيلي", "النسبه الموزونه", "برامج وكليات الجامعه"),
-                    prefer_article=("شروط الترشيح",),
-                )
-                if any(
-                    term in search_text(context)
-                    for term in ("شروط الترشيح", "القبول", "الثانويه", "القدرات", "التحصيلي", "النسبه الموزونه")
-                )
-            ][:3]
-            if admission_contexts:
-                return dedupe_preserve_order_contexts(admission_contexts)
-        if list_like_question_kind(question) == "system" and "تقدير" in normalize_for_matching(question):
-            grading_pool = contexts
-            grading_contexts = [
-                context
-                for context in rank_contexts_by_terms(
-                    grading_pool,
-                    include_any=("النسبة المئوية", "نقاط التقدير", "الوزن", "ممتاز", "جيد", "مقبول", "راسب"),
-                    prefer_article=("95 - 100", "90 إلى أقل من 95", "85 إلى أقل من 90"),
-                )
-                if any(
-                    term in search_text(context)
-                    for term in (
-                        "الفصل التاسع التقديرات",
-                        "النسبة المئوية",
-                        "نقاط التقدير",
-                        "الوزن",
-                    )
-                )
-            ][:4]
-            if grading_contexts:
-                return dedupe_preserve_order_contexts(grading_contexts)
-        if mode == "gpa_formula":
-            formula_contexts = [
-                context
-                for context in (
-                    pick_context(
-                        contexts,
-                        article_terms=("المعدل الفصلي",),
-                        include_any=("حاصل قسمة", "مجموع النقاط", "الوحدات"),
-                    ),
-                    pick_context(
-                        contexts,
-                        article_terms=("المعدل التراكمي",),
-                        include_any=("حاصل قسمة", "مجموع النقاط", "الوحدات"),
-                    ),
-                    pick_context(
-                        contexts,
-                        include_any=("طريقة حساب المعدل", "نقاط التقدير", "عدد ساعات المقرر"),
-                    ),
-                )
-                if context is not None
-            ]
-            if formula_contexts:
-                return dedupe_preserve_order_contexts(formula_contexts)
-        if mode == "load_limit":
-            normalized_question = normalize_for_matching(question)
-            asks_upper = asks_upper_limit_fn(normalized_question)
-            asks_lower = asks_lower_limit_fn(normalized_question)
-            asks_range = asks_upper and asks_lower
-            relevant_contexts = [
-                context
-                for context in contexts
-                if any(
-                    term in search_text(context)
-                    for term in (
-                        "العبء الدراسي",
-                        "الحد الاعلي للعبء الدراسي",
-                        "الحد الادني للعبء الدراسي",
-                        "الوحدات الدراسيه",
-                        "يسمح للطالب التسجيل",
-                        "محدده من مجلس الجامعه",
-                        "اقل من الحد الادني للعبء الدراسي",
-                    )
-                )
-            ]
-            if asks_range:
-                mode_contexts = [
-                    context
-                    for context in (
-                        pick_context(
-                            relevant_contexts,
-                            article_terms=("الحد الادني للعبء الدراسي",),
-                            include_any=("الحد الادني للعبء الدراسي", "العبء الدراسي"),
-                        ),
-                        pick_context(
-                            relevant_contexts,
-                            article_terms=("الحد الاعلي للعبء الدراسي",),
-                            include_any=("الحد الاعلي للعبء الدراسي", "العبء الدراسي"),
-                        ),
-                        pick_context(
-                            relevant_contexts,
-                            article_terms=("العبء الدراسي",),
-                            include_any=("العبء الدراسي", "يسمح للطالب التسجيل"),
-                        ),
-                    )
-                    if context is not None
-                ]
-            elif asks_upper:
-                mode_contexts = [
-                    context
-                    for context in (
-                        pick_context(
-                            relevant_contexts,
-                            article_terms=("الحد الاعلي للعبء الدراسي",),
-                            include_any=("الحد الاعلي للعبء الدراسي", "العبء الدراسي"),
-                        ),
-                        pick_context(
-                            relevant_contexts,
-                            article_terms=("العبء الدراسي",),
-                            include_any=("محدده من مجلس الجامعه", "يسمح للطالب التسجيل", "العبء الدراسي"),
-                        ),
-                    )
-                    if context is not None
-                ]
-            elif asks_lower:
-                mode_contexts = [
-                    context
-                    for context in (
-                        pick_context(
-                            relevant_contexts,
-                            article_terms=("الحد الادني للعبء الدراسي",),
-                            include_any=("الحد الادني للعبء الدراسي", "العبء الدراسي"),
-                        ),
-                        pick_context(
-                            relevant_contexts,
-                            include_any=("اقل من الحد الادني للعبء الدراسي", "لا يسمح للطالب الانسحاب"),
-                            article_terms=("البند 4",),
-                        ),
-                        pick_context(
-                            relevant_contexts,
-                            article_terms=("العبء الدراسي",),
-                            include_any=("العبء الدراسي", "يسمح للطالب التسجيل"),
-                        ),
-                    )
-                    if context is not None
-                ]
-            else:
-                mode_contexts = [
-                    context
-                    for context in (
-                        pick_context(
-                            relevant_contexts,
-                            article_terms=("العبء الدراسي",),
-                            include_any=("العبء الدراسي", "يسمح للطالب التسجيل", "الوحدات الدراسيه"),
-                        ),
-                        pick_context(
-                            relevant_contexts,
-                            article_terms=("الحد الاعلي للعبء الدراسي", "الحد الادني للعبء الدراسي"),
-                            include_any=("العبء الدراسي", "الوحدات الدراسيه"),
-                        ),
-                    )
-                    if context is not None
-                ]
-
-            clarification_context = next(
-                (
-                    context
-                    for context in rank_contexts_by_terms(
-                        relevant_contexts,
-                        include_any=("الحد الاعلي", "الحد الادني", "الوحدات", "الفصل الصيفي", "العبء الدراسي"),
-                        exclude_ids={context["id"] for context in mode_contexts},
-                    )
-                    if mode_contexts
-                    and source_priority(context_source_type(context))
-                    < source_priority(context_source_type(mode_contexts[0]))
-                    and extract_limit_number_text(extract_snippet(context, question, "ar"))
-                ),
-                None,
-            )
-            if clarification_context is not None:
-                mode_contexts.append(clarification_context)
-
-            if mode_contexts:
-                return dedupe_preserve_order_contexts(mode_contexts)
+    # (No-op: removed misplaced import)
         if mode == "missed_final":
             mode_contexts = rank_contexts_by_terms(
                 contexts,
@@ -2223,114 +1569,6 @@ def select_secondary_clarification_context(
     return candidates[0][1]
 
 
-def is_heading_like_line(line: str) -> bool:
-    stripped = (line or "").strip()
-    if not stripped or LIST_ITEM_PATTERN.match(stripped):
-        return False
-
-    normalized = normalize_for_matching(stripped)
-    return any(
-        normalized.startswith(prefix)
-        for prefix in (
-            "الفصل ",
-            "الباب ",
-            "القسم ",
-            "المادة ",
-            "القاعده التنفيذيه",
-            "اولا",
-            "ثانيا",
-            "ثالثا",
-            "رابعا",
-            "خامسا",
-            "سادسا",
-            "سابعا",
-            "ثامنا",
-            "تاسعا",
-            "عاشرا",
-            "قبل الاختبار",
-            "اثناء الاختبار",
-            "بعد الاختبار",
-            "سلم التقديرات",
-            "نظام التقديرات",
-        )
-    ) or normalized.endswith(":")
-
-
-def is_rule_like_line(line: str) -> bool:
-    stripped = (line or "").strip()
-    if not stripped or "[غير واضح في المصدر]" in stripped:
-        return False
-
-    normalized = normalize_for_matching(stripped)
-    if "الصفحه" in normalized or normalized.endswith("الصفحه"):
-        return False
-    if LIST_ITEM_PATTERN.match(stripped):
-        return True
-
-    return any(
-        phrase in normalized
-        for phrase in (
-            "لا يجوز",
-            "لا يسمح",
-            "يجوز",
-            "يسمح",
-            "يحق",
-            "يجب",
-            "يلتزم",
-            "تلتزم",
-            "الا يكون",
-            "ان يكون",
-            "عدم ",
-            "منع ",
-            "الحد الاعلي",
-            "الحد الادني",
-            "ممتاز",
-            "جيد جدا",
-            "مقبول",
-            "راسب",
-            "محروم",
-            "منسحب",
-        )
-    )
-
-
-def strip_list_marker(line: str) -> str:
-    return LIST_ITEM_PATTERN.sub("", (line or "").strip(), count=1).strip()
-
-
-def normalize_answer_item(line: str) -> str:
-    cleaned = strip_list_marker(line)
-    cleaned = cleaned.rstrip(" .،؛")
-    cleaned = re.sub(r"\s+", " ", cleaned).strip()
-    return cleaned
-
-
-def build_answer_item_text(question: str, line: str) -> str:
-    stripped = (line or "").strip().rstrip(" .،؛")
-    normalized_stripped = normalize_for_matching(stripped)
-    if list_like_question_kind(question) == "system" and (
-        re.match(r"^[\d٠-٩]+\s*[-–]\s*[\d٠-٩]+", stripped)
-        or re.match(r"^\d+\s+(?:الي|الى)\s+اقل", normalized_stripped)
-    ):
-        return re.sub(r"\s+", " ", stripped).strip()
-    return normalize_answer_item(line)
-
-
-def anchored_block_indices(lines: list[str], anchor_index: int) -> list[int]:
-    if not lines or anchor_index < 0 or anchor_index >= len(lines):
-        return []
-
-    start = anchor_index
-    while start > 0 and not is_heading_like_line(lines[start - 1]):
-        start -= 1
-
-    end = anchor_index
-    while end + 1 < len(lines) and not is_heading_like_line(lines[end + 1]):
-        end += 1
-
-    return list(range(start, end + 1))
-
-
 def extract_context_answer_items(
     context: dict[str, Any],
     question: str,
@@ -2632,48 +1870,6 @@ def select_reference_contexts(
         )
 
     return [entry["context"] for entry in ordered_entries[:max_items]]
-
-
-def extract_status_code_meaning_from_text(text: str, code: str) -> str:
-    normalized_code = code.lower()
-    for raw_line in (text or "").splitlines():
-        line = raw_line.strip()
-        normalized_line = f" {normalize_for_matching(line)} "
-        if not line or f" {normalized_code} " not in normalized_line:
-            continue
-
-        label_match = re.search(rf"\b{re.escape(code)}\b\s*\(([^)]+)\)", line, flags=re.IGNORECASE)
-        if label_match:
-            return label_match.group(1).strip(" :،")
-
-        parts = [part.strip(" :،") for part in STATUS_CODE_LINE_PATTERN.split(line) if part.strip(" :،")]
-        for index, part in enumerate(parts):
-            if normalize_for_matching(part) != normalized_code:
-                continue
-            if index > 0:
-                return parts[index - 1].rstrip(" :،")
-
-        return line.rstrip(" :،")
-    return ""
-
-
-def extract_status_code_description_from_text(text: str, code: str) -> str:
-    normalized_code = code.lower()
-    for raw_line in (text or "").splitlines():
-        line = raw_line.strip()
-        normalized_line = f" {normalize_for_matching(line)} "
-        if not line or f" {normalized_code} " not in normalized_line:
-            continue
-        if "الوصف" not in normalize_for_matching(line):
-            continue
-
-        description = line
-        if "الوصف" in line:
-            description = line.split("الوصف", 1)[1]
-        if ":" in description:
-            description = description.split(":", 1)[1]
-        return description.strip(" :،").rstrip(" .،")
-    return ""
 
 
 def build_status_code_arabic_answer(question: str, contexts: list[dict[str, Any]]) -> str | None:
@@ -3885,6 +3081,25 @@ def build_arabic_answer(question: str, contexts: list[dict[str, Any]]) -> str:
     formatter_context.question = question
     return formatter.build_arabic_answer(question, contexts, context=formatter_context)
 
+
+def filter_contexts_for_generation(
+    question: str,
+    contexts: list[dict[str, Any]],
+    language: str,
+    *,
+    route: RouteDecision,
+    fallback_service: FallbackService,
+) -> list[dict[str, Any]]:
+    """
+    Wrapper for augment_contexts_for_route for use in ChatService and other orchestration logic.
+    """
+    return augment_contexts_for_route(
+        question,
+        contexts,
+        language,
+        route=route,
+        fallback_service=fallback_service,
+    )
 
 class ChatService:
     def __init__(

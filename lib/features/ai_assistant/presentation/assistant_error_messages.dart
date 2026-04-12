@@ -12,6 +12,10 @@ String localizeAssistantError(
       return _networkMessage(isArabic: isArabic, action: action);
     case AssistantApiErrorKind.timeout:
       return _timeoutMessage(isArabic: isArabic, action: action);
+    case AssistantApiErrorKind.rateLimited:
+      return isArabic
+          ? 'تم إرسال طلبات كثيرة خلال وقت قصير. انتظر قليلاً ثم حاول مرة أخرى.'
+          : 'Too many requests were sent in a short time. Please wait a moment and try again.';
     case AssistantApiErrorKind.invalidResponse:
       return isArabic
           ? 'رد الخادم غير صالح حالياً. حاول مرة أخرى بعد قليل.'

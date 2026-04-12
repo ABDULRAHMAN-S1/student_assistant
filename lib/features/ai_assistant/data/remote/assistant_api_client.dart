@@ -15,6 +15,7 @@ enum AssistantApiErrorKind {
   unknown,
   network,
   timeout,
+  rateLimited,
   invalidResponse,
   unauthorized,
   authenticationRequired,
@@ -41,6 +42,8 @@ class AssistantApiException implements Exception {
 
 class AssistantApiClient {
   const AssistantApiClient();
+
+  static Future<AuthSession>? _inFlightRefresh;
 
   Future<AssistantReply> ask(String message) async {
     final response = await _postAuthorized(
@@ -193,13 +196,20 @@ class AssistantApiClient {
   }
 
   Future<AuthSession> _refreshSession(AuthSession session) async {
-    try {
+    Future<AuthSession> doRefresh() async {
       final refreshed = await const AuthApiClient().refreshSession(
         session.refreshToken,
       );
       final settingsStore = await AppSettingsStore.open();
       await settingsStore.writeAuthSession(refreshed);
       return refreshed;
+    }
+
+    try {
+      final future = _inFlightRefresh ??= doRefresh().whenComplete(
+        () => _inFlightRefresh = null,
+      );
+      return await future;
     } on AuthApiException catch (error) {
       if (_isRejectedRefresh(error)) {
         await _clearStoredSession();
@@ -273,6 +283,9 @@ class AssistantApiClient {
   ) {
     if (statusCode == 400 || statusCode == 422) {
       return AssistantApiErrorKind.validation;
+    }
+    if (statusCode == 429) {
+      return AssistantApiErrorKind.rateLimited;
     }
     if (statusCode == 401 || statusCode == 403) {
       return AssistantApiErrorKind.unauthorized;

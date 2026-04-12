@@ -45,12 +45,7 @@ class RateLimiter:
     def _enforce_with_sqlite(self, *, route_key: str, actor_key: str, limit: int, window_seconds: int) -> None:
         current_window = int(time.time() // window_seconds)
         bucket_key = f"{route_key}:{actor_key}"
-        existing = database.get_rate_limit_window(bucket_key)
-
-        if existing is None or existing[0] != current_window:
-            database.reset_rate_limit_window(bucket_key=bucket_key, window_started_at=current_window)
-
-        allowed, _ = database.advance_rate_limit_window(
+        allowed = database.atomic_rate_limit_check(
             bucket_key=bucket_key,
             window_started_at=current_window,
             limit=limit,

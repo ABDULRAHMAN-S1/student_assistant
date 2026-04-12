@@ -209,10 +209,17 @@ def is_refresh_token_active(token: str) -> bool:
     return row["expires_at"] > utc_now().isoformat()
 
 
+def _bounded_feedback_text(value: str, *, limit: int = 280) -> str:
+    normalized = " ".join((value or "").strip().split())
+    if len(normalized) <= limit:
+        return normalized
+    return normalized[:limit].rstrip()
+
+
 def insert_feedback(*, feedback_id: str, user_id: str, question: str, answer: str, helpful: bool, language: str, sources: list[dict[str, Any]], reason: str = "", route_mode: str = "") -> None:
-    # Only store plaintext question/answer when helpful is False (privacy).
-    store_question = question.strip() if not helpful else ""
-    store_answer = answer.strip() if not helpful else ""
+    # For unhelpful feedback, store bounded snippets instead of full raw text.
+    store_question = _bounded_feedback_text(question) if not helpful else ""
+    store_answer = _bounded_feedback_text(answer) if not helpful else ""
     with connection_scope() as connection:
         connection.execute(
             """
@@ -236,51 +243,44 @@ def insert_feedback(*, feedback_id: str, user_id: str, question: str, answer: st
         )
 
 
-def advance_rate_limit_window(*, bucket_key: str, window_started_at: int, limit: int) -> tuple[bool, int]:
-    with connection_scope() as connection:
-        row = connection.execute(
-            "SELECT request_count FROM rate_limit_windows WHERE bucket_key = ? LIMIT 1",
-            (bucket_key,),
-        ).fetchone()
+def atomic_rate_limit_check(*, bucket_key: str, window_started_at: int, limit: int) -> bool:
+    """Atomically check and increment the rate-limit counter.
 
-        if row is None:
-            connection.execute(
-                "INSERT INTO rate_limit_windows (bucket_key, window_started_at, request_count, updated_at) VALUES (?, ?, ?, ?)",
-                (bucket_key, window_started_at, 1, _timestamp()),
-            )
-            return True, 1
-
-        current_count = int(row["request_count"])
-        if current_count >= limit:
-            return False, current_count
-
-        updated_count = current_count + 1
-        connection.execute(
-            "UPDATE rate_limit_windows SET request_count = ?, updated_at = ? WHERE bucket_key = ?",
-            (updated_count, _timestamp(), bucket_key),
-        )
-        return True, updated_count
-
-
-def reset_rate_limit_window(*, bucket_key: str, window_started_at: int) -> None:
-    with connection_scope() as connection:
+    Returns True if the request is allowed, False if the limit is exceeded.
+    Uses a single IMMEDIATE transaction so the read-check-write is atomic.
+    """
+    connection = get_connection()
+    try:
+        connection.execute("BEGIN IMMEDIATE")
         connection.execute(
             """
             INSERT INTO rate_limit_windows (bucket_key, window_started_at, request_count, updated_at)
             VALUES (?, ?, 0, ?)
             ON CONFLICT(bucket_key)
-            DO UPDATE SET window_started_at = excluded.window_started_at, request_count = 0, updated_at = excluded.updated_at
+            DO UPDATE SET
+                window_started_at = excluded.window_started_at,
+                request_count = 0,
+                updated_at = excluded.updated_at
+            WHERE window_started_at != excluded.window_started_at
             """,
             (bucket_key, window_started_at, _timestamp()),
         )
-
-
-def get_rate_limit_window(bucket_key: str) -> tuple[int, int] | None:
-    with connection_scope() as connection:
         row = connection.execute(
-            "SELECT window_started_at, request_count FROM rate_limit_windows WHERE bucket_key = ? LIMIT 1",
+            "SELECT request_count FROM rate_limit_windows WHERE bucket_key = ?",
             (bucket_key,),
         ).fetchone()
-    if row is None:
-        return None
-    return int(row["window_started_at"]), int(row["request_count"])
+        current_count = int(row["request_count"])
+        if current_count >= limit:
+            connection.commit()
+            return False
+        connection.execute(
+            "UPDATE rate_limit_windows SET request_count = request_count + 1, updated_at = ? WHERE bucket_key = ?",
+            (_timestamp(), bucket_key),
+        )
+        connection.commit()
+        return True
+    except Exception:
+        connection.rollback()
+        raise
+    finally:
+        connection.close()

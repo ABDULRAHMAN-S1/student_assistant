@@ -74,6 +74,23 @@ def get_settings() -> Settings:
     db_path = Path(os.getenv("APP_DB_PATH", str(DATA_DIR / "app.db"))).resolve()
     db_path.parent.mkdir(parents=True, exist_ok=True)
 
+    _DEFAULT_JWT_SECRET = "development-only-change-me"
+    jwt_secret = os.getenv("JWT_SECRET", "").strip() or _DEFAULT_JWT_SECRET
+
+    if app_env == "production" and jwt_secret == _DEFAULT_JWT_SECRET:
+        raise RuntimeError(
+            "FATAL: JWT_SECRET is not set or still uses the default value. "
+            "Set a strong, unique JWT_SECRET environment variable before "
+            "running in production."
+        )
+
+    if jwt_secret == _DEFAULT_JWT_SECRET:
+        import logging as _log
+        _log.getLogger(__name__).warning(
+            "JWT_SECRET is using the default development value. "
+            "Do NOT use this in any internet-facing deployment."
+        )
+
     return Settings(
         app_env=app_env,
         api_title=os.getenv("API_TITLE", "Student Assistant API"),
@@ -81,7 +98,7 @@ def get_settings() -> Settings:
         db_path=db_path,
         log_level=os.getenv("LOG_LEVEL", "INFO").upper(),
         cors_origins=cors_origins,
-        jwt_secret=os.getenv("JWT_SECRET", "development-only-change-me"),
+        jwt_secret=jwt_secret,
         access_token_ttl_seconds=_read_int("ACCESS_TOKEN_TTL_SECONDS", 900),
         refresh_token_ttl_seconds=_read_int("REFRESH_TOKEN_TTL_SECONDS", 604800),
         require_https=_read_bool("REQUIRE_HTTPS", app_env == "production"),

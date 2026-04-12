@@ -106,6 +106,10 @@ class _AIChatPageState extends State<AIChatPage> {
       return;
     }
 
+    if (!_isLoadingHistory) {
+      await _persistHistory();
+    }
+
     setState(() {
       _activeHistoryIsArabic = nextHistoryIsArabic;
     });
@@ -114,7 +118,7 @@ class _AIChatPageState extends State<AIChatPage> {
       return;
     }
 
-    await _persistHistory();
+    await _initializeChat();
   }
 
   Future<void> _initializeChat() async {
@@ -500,11 +504,32 @@ class _AIChatPageState extends State<AIChatPage> {
         : 'Questions based on your academic context and current recommendations.';
   }
 
+  Future<void>? _activePersist;
+  bool _persistAgain = false;
+
   Future<void> _persistHistory() async {
-    await _chatHistoryStore.saveHistory(
-      isArabic: _activeHistoryIsArabic,
-      messages: _messages.map((message) => message.toMap()).toList(),
-    );
+    if (_activePersist != null) {
+      _persistAgain = true;
+      await _activePersist;
+      return;
+    }
+
+    Future<void> doWrite() async {
+      do {
+        _persistAgain = false;
+        await _chatHistoryStore.saveHistory(
+          isArabic: _activeHistoryIsArabic,
+          messages: _messages.map((message) => message.toMap()).toList(),
+        );
+      } while (_persistAgain);
+    }
+
+    _activePersist = doWrite();
+    try {
+      await _activePersist;
+    } finally {
+      _activePersist = null;
+    }
   }
 
   bool _isSameLogicalMessage(ChatMessage left, ChatMessage right) {

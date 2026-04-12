@@ -157,13 +157,18 @@ def refresh_session(refresh_token: str) -> dict[str, object]:
     token = (refresh_token or "").strip()
     if not token:
         _raise_auth_error("Refresh token is required.")
-    payload = decode_jwt(token, expected_type="refresh")
+    try:
+        payload = decode_jwt(token, expected_type="refresh")
+    except Exception:
+        _raise_auth_error("Invalid or expired token.")
     if not database.is_refresh_token_active(token):
         _raise_auth_error("Refresh token is invalid or revoked.")
 
     user = database.fetch_user_by_id(str(payload["sub"]))
     if user is None:
         _raise_auth_error("User not found.")
+    if not bool(user.get("is_active", 1)):
+        _raise_auth_error("User account is disabled.")
 
     database.revoke_refresh_token(token)
     return issue_session(
@@ -207,7 +212,10 @@ def require_authenticated_user(request: Request) -> AuthenticatedUser:
     if scheme.lower() != "bearer" or not token.strip():
         _raise_auth_error("Bearer token is required.")
 
-    payload = decode_jwt(token.strip(), expected_type="access")
+    try:
+        payload = decode_jwt(token.strip(), expected_type="access")
+    except Exception:
+        _raise_auth_error("Invalid or expired token.")
     user = database.fetch_user_by_id(str(payload["sub"]))
     if user is None or not bool(user.get("is_active", 1)):
         _raise_auth_error("User account is unavailable.")
