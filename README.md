@@ -92,6 +92,6 @@ venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-See `backend/README.md` for the backend API, startup flow, and temporary Python 3.14 transition note.
+See `backend/README.md` for the backend API and startup flow.
 
 See `RELEASE_CHECKLIST.md` for backend and Flutter deployment requirements.

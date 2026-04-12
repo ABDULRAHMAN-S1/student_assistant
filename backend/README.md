@@ -12,7 +12,6 @@ This backend serves the Flutter client and answers from the processed regulation
 - Official backend runtime: `Python 3.13.x`
 - Official Windows virtual environment path: `backend\venv`
 - Create the backend environment with `py -3.13 -m venv venv`
-- Python 3.14 remains temporary transition support only and runs without the full semantic retrieval stack
 
 ## Runtime Flow
 
@@ -58,8 +57,6 @@ python -m pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
-If you already have a `backend\venv` created from Python 3.14, remove it and recreate it with Python 3.13 before reinstalling dependencies.
-
 If you already created `backend\venv`, only activation is required before running backend commands:
 
 ```bash
@@ -92,8 +89,6 @@ If you want to run it manually in an active terminal, this still works:
 ```bash
 uvicorn app.api:app --host 0.0.0.0 --port 8000 --reload
 ```
-
-Python 3.14 remains useful only as a temporary transition fallback. On 3.14 the backend skips `torch` and `sentence-transformers`, so full semantic retrieval is not available.
 
 ## Authentication
 

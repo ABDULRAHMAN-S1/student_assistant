@@ -16,10 +16,7 @@ from typing import Any
 import chromadb
 from chromadb.config import Settings
 
-try:
-    from sentence_transformers import SentenceTransformer
-except ImportError:  # pragma: no cover
-    SentenceTransformer = None  # type: ignore[assignment]
+from sentence_transformers import SentenceTransformer
 
 
 logger = logging.getLogger(__name__)
@@ -1124,11 +1121,6 @@ def lexical_match_score(record: dict[str, Any], query_profile: dict[str, Any]) -
 
 @lru_cache(maxsize=1)
 def get_embedding_model() -> Any:
-    if SentenceTransformer is None:
-        raise RuntimeError(
-            "sentence-transformers is not installed. Use Python 3.13 or earlier to enable semantic search."
-        )
-
     os.environ.setdefault("HF_HUB_DISABLE_PROGRESS_BARS", "1")
     os.environ.setdefault("TRANSFORMERS_VERBOSITY", "error")
     os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
