@@ -118,10 +118,11 @@ class _AdminPanelPageState extends State<AdminPanelPage> {
         ),
       );
     } finally {
-      if (!mounted) return;
-      setState(() {
-        _updatingUserId = null;
-      });
+      if (mounted) {
+        setState(() {
+          _updatingUserId = null;
+        });
+      }
     }
   }
 
