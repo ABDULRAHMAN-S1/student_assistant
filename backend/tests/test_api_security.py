@@ -22,6 +22,9 @@ def build_client(tmp_path: Path) -> tuple[object, TestClient]:
     os.environ["APP_DB_PATH"] = str(tmp_path / "app.db")
     os.environ["ENABLE_TRANSLATION"] = "false"
     os.environ["REQUIRE_HTTPS"] = "false"
+    os.environ["TRUST_FORWARDED_PROTO"] = "true"
+    os.environ["TRUST_FORWARDED_FOR"] = "true"
+    os.environ["TRUSTED_PROXY_IPS"] = ""
     os.environ["CORS_ORIGINS"] = "http://localhost:3000"
 
     from app.config import get_settings
@@ -282,6 +285,19 @@ class ApiSecurityTests(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 503)
         self.assertEqual(response.json()["error"]["code"], "translation_unavailable")
+
+    def test_forwarded_headers_are_ignored_without_trusted_proxy_ips(self) -> None:
+        tokens = self.register_user()
+        # Even if forwarded headers are present, without TRUSTED_PROXY_IPS they must be ignored.
+        response = self.client.get(
+            "/health",
+            headers={
+                **self.auth_headers(tokens["access_token"]),
+                "X-Forwarded-Proto": "https",
+                "X-Forwarded-For": "203.0.113.10",
+            },
+        )
+        self.assertEqual(response.status_code, 200)
 
 
 if __name__ == "__main__":

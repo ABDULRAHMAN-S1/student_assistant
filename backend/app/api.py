@@ -110,7 +110,8 @@ def client_identity(request: Request, user: AuthenticatedUser | None = None) -> 
         return user.user_id
     if settings.trust_forwarded_for:
         client_host = request.client.host if request.client else ""
-        if client_host and (not settings.trusted_proxy_ips or client_host in settings.trusted_proxy_ips):
+        # Only trust X-Forwarded-For when the direct client is a known proxy.
+        if client_host and settings.trusted_proxy_ips and client_host in settings.trusted_proxy_ips:
             forwarded_for = request.headers.get("x-forwarded-for", "").split(",")[0].strip()
             if forwarded_for:
                 return forwarded_for
@@ -145,7 +146,13 @@ def enforce_rate_limit(request: Request, *, user: AuthenticatedUser | None = Non
 async def apply_request_security(request: Request, call_next):
     request.state.request_id = request.headers.get("x-request-id", uuid4().hex)
     forwarded_proto = request.headers.get("x-forwarded-proto", "").lower().strip()
-    effective_proto = forwarded_proto if settings.trust_forwarded_proto and forwarded_proto else request.url.scheme
+    direct_client = request.client.host if request.client else ""
+    is_trusted_proxy = bool(direct_client and settings.trusted_proxy_ips and direct_client in settings.trusted_proxy_ips)
+    effective_proto = (
+        forwarded_proto
+        if settings.trust_forwarded_proto and forwarded_proto and is_trusted_proxy
+        else request.url.scheme
+    )
 
     if settings.require_https and effective_proto != "https":
         return error_response(

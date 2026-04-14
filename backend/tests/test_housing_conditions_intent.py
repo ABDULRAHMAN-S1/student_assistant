@@ -36,6 +36,24 @@ class HousingConditionsIntentTests(unittest.TestCase):
         )
         self.assertIn("اسكان", haystack)
 
+    def test_housing_conditions_colloquial_variant_is_still_housing_admission(self) -> None:
+        resp = answer_question("وش شروط السكن؟", top_k=4)
+        self.assertEqual(resp.get("route_mode"), "housing_conditions")
+
+        answer = normalize_for_matching(resp.get("answer", ""))
+        self.assertNotIn("الزياره", answer)
+        self.assertNotIn("نظام الزياره", answer)
+        self.assertNotIn("بطاقه السكن", answer)
+        # Still must anchor to housing rules sources.
+        sources = resp.get("sources", []) or []
+        haystack = normalize_for_matching(
+            " ".join(
+                str(s.get("source", "")) + " " + str(s.get("document_title", "")) + " " + str(s.get("title", ""))
+                for s in sources
+            )
+        )
+        self.assertIn("اسكان", haystack)
+
 
 if __name__ == "__main__":
     unittest.main()
