@@ -241,10 +241,18 @@ def context_matches_route_mode(context: dict[str, Any], mode: str) -> bool:
         )
 
     if mode == "housing_conditions":
-        has_housing_anchor = record_flags["housing"] or any(
-            term in haystack for term in ("السكن", "الاسكان", "الاسكان الطلابي")
-        )
-        return has_housing_anchor and any(term in haystack for term in ("شروط", "قبول"))
+        # Keep matching tight: only accept contexts explicitly about housing admission/eligibility.
+        normalized = normalize_for_matching(context_search_text(context))
+        has_housing_anchor = any(term in normalized for term in ("السكن", "الاسكان", "الاسكان الطلابي", "الاقامه بالسكن", "الاقامة بالسكن"))
+        if not has_housing_anchor:
+            return False
+        if "ضوابط الدخول والخروج" in normalized:
+            return False
+        if not any(term in normalized for term in ("شروط القبول", "قبول", "يشترط", "متطلبات", "استحقاق", "اهليه")):
+            return False
+        if any(term in normalized for term in ("حرمان", "عقوب", "مخالف", "طرد", "اخلاء", "نهائي", "منع", "ممنوع")):
+            return False
+        return True
 
     if mode == "attendance_penalty":
         return (
@@ -1118,6 +1126,11 @@ def passes_relevance_gate(
     if mode_requires_strict_context_match(mode) and not context_matches_route_mode(context, mode):
         return False
 
+    # For housing admission/eligibility questions, strict mode matching is enough.
+    # Lexical "important stems" can miss synonyms (e.g. سكن vs إسكان) in the source text.
+    if language == "ar" and mode == "housing_conditions":
+        return True
+
     if details["phrase_matches"] > 0:
         return True
 
@@ -1189,6 +1202,21 @@ def augment_contexts_for_route(
         add_fallback("housing_conditions", limit=4)
     elif route.mode == "penalty":
         add_fallback("penalty", limit=4)
+
+    # Use augmented contexts (retrieval + curated fallbacks) for scoring/gating below.
+    contexts = augmented
+
+    if mode == "housing_conditions":
+        # Keep only admission/eligibility contexts for housing conditions.
+        deny_terms = ("حرمان", "عقوب", "مخالف", "طرد", "اخلاء", "نهائي", "منع", "ممنوع")
+        contexts = [
+            context
+            for context in contexts
+            if "القواعد المنظمه للاسكان الطلابي" in context_search_text(context)
+            and "شروط القبول" in context_search_text(context)
+            and "ضوابط الدخول والخروج" not in context_search_text(context)
+            and not any(term in context_search_text(context) for term in deny_terms)
+        ] or contexts
 
 
     if mode == "missed_final":
@@ -1326,7 +1354,8 @@ def augment_contexts_for_route(
         for index, context in enumerate(
             rank_contexts_by_terms(
                 contexts,
-                include_any=("شروط", "الاسكان", "السكن الجامعي", "قبول"),
+                include_any=("الاسكان", "الاسكان الطلابي", "السكن الجامعي"),
+                prefer_article=("شروط القبول", "شروط القبول بالاسكان الطلابي"),
             )[:4]
         ):
             mode_priority[context["id"]] = 1.0 - (index * 0.1)
@@ -2480,11 +2509,45 @@ def build_mode_based_arabic_answer(
     mode = detect_answer_mode(question, "ar")
     if mode == "general":
         return None
-    if mode in {"housing_conditions", "attendance_penalty", "smoking"}:
+    if mode in {"attendance_penalty", "smoking"}:
         return None
 
     used_contexts: list[dict[str, Any]] = []
     parts: list[str] = []
+
+    if mode == "housing_conditions":
+        # Only pull from housing admission/eligibility contexts (exclude denial/punishment and operational rules).
+        ranked = rank_contexts_by_terms(
+            contexts,
+            include_any=("الاسكان", "الاسكان الطلابي", "السكن الجامعي"),
+            prefer_article=("شروط القبول", "شروط القبول بالاسكان الطلابي"),
+        )
+        example_contexts = [
+            context
+            for context in ranked
+            if "شروط القبول" in context_search_text(context)
+            and "ضوابط الدخول والخروج" not in context_search_text(context)
+        ][:6]
+        deny_terms = ("حرمان", "الحرمان", "عقوب", "مخالف", "طرد", "اخلاء", "نهائي", "منع", "ممنوع")
+        condition_lines: list[str] = []
+        for context in example_contexts:
+            for line in clean_context_lines(context):
+                normalized_line = normalize_for_matching(line)
+                if "[غير واضح في المصدر]" in line or normalized_line.endswith(":"):
+                    continue
+                if any(term in normalized_line for term in deny_terms):
+                    continue
+                if not any(term in normalized_line for term in ("يشترط", "الا يكون", "ألا يكون", "ان يكون", "- ")):
+                    continue
+                condition_lines.append(normalize_answer_item(line))
+        condition_lines = dedupe_preserve_order(condition_lines)
+        if not condition_lines:
+            return None
+        used_contexts.extend(example_contexts)
+        parts.append("شروط القبول في الإسكان الطلابي حسب اللائحة:")
+        parts.append("- " + "\n- ".join(condition_lines[:8]).rstrip(" .،"))
+        unclear = contexts_have_quality_risk(example_contexts)
+        return " ".join(parts).strip(), dedupe_preserve_order_contexts(used_contexts), unclear
 
     if mode == "load_limit":
         normalized_question = normalize_for_matching(question)
@@ -3044,33 +3107,6 @@ def build_english_answer(arabic_answer: str, reference: str) -> str:
     return formatter.build_english_answer(arabic_answer, reference, context=_formatter_context())
 
 
-def sanitize_cheating_penalty_scope_answer(question: str, answer: str) -> str:
-    """
-    Single source of truth for excluding unrelated terms from cheating penalty answers.
-    - Always remove housing-related terms.
-    - For exam-scoped cheating questions, also remove non-exam items (work/research/report/homework).
-    """
-    is_cheating_penalty_question = (
-        list_like_question_kind(question) == "penalties"
-        and penalty_question_domain(question) == "cheating"
-    )
-    if not is_cheating_penalty_question:
-        return answer
-
-    normalized_question = normalize_for_matching(question)
-
-    housing_terms = ("سكن", "اسكان", "الاسكان", "الاقامه بالسكن", "الاقامة بالسكن")
-    for term in housing_terms:
-        answer = answer.replace(term, "")
-
-    if "اختبار" in normalized_question:
-        non_exam_terms = ("العمل", "البحث", "التقرير", "الواجب")
-        for term in non_exam_terms:
-            answer = answer.replace(term, "")
-
-    return re.sub(r"\s+", " ", answer).strip()
-
-
 def compose_arabic_response(
     question: str,
     contexts: list[dict[str, Any]],
@@ -3166,7 +3202,7 @@ class ChatService:
         mode = str(route_data["mode"])
         retrieval_top_k = (
             max(top_k, 12)
-            if mode in {"load_limit", "penalty", "attendance_penalty", "gpa_formula"}
+            if mode in {"load_limit", "penalty", "attendance_penalty", "gpa_formula", "housing_conditions"}
             else max(top_k, 8)
         )
         return RouteDecision.from_mapping(
@@ -3236,6 +3272,42 @@ class ChatService:
         formatter_context.route = route
         formatter_context.answer_state = answer_state
         contexts_for_answer = filtered_contexts
+        if language == "ar" and contexts_for_answer:
+            normalized_question = normalize_for_matching(working_question)
+            is_cheating_penalty_question = (
+                list_like_question_kind(working_question) == "penalties"
+                and penalty_question_domain(working_question) == "cheating"
+            )
+            if is_cheating_penalty_question:
+                housing_terms = ("سكن", "اسكان", "الاسكان", "الاقامه بالسكن", "الاقامة بالسكن")
+                non_exam_terms = ("العمل", "البحث", "التقرير", "الواجب")
+                is_exam_scoped = "اختبار" in normalized_question
+                filtered: list[dict[str, Any]] = []
+                for context in contexts_for_answer:
+                    content = context.get("content", "")
+                    if not isinstance(content, str) or not content.strip():
+                        filtered.append(context)
+                        continue
+
+                    keep_lines: list[str] = []
+                    for line in content.splitlines():
+                        normalized_line = normalize_for_matching(line)
+                        if any(term in normalized_line for term in housing_terms):
+                            continue
+                        if is_exam_scoped and any(term in normalized_line for term in non_exam_terms):
+                            continue
+                        keep_lines.append(line)
+
+                    sanitized_content = "\n".join(keep_lines).strip()
+                    if not sanitized_content:
+                        continue
+
+                    # Keep metadata/scores but remove excluded lines from content.
+                    sanitized_context = dict(context)
+                    sanitized_context["content"] = sanitized_content
+                    filtered.append(sanitized_context)
+
+                contexts_for_answer = filtered
 
         answer = (
             self.formatter.build_arabic_answer(working_question, contexts_for_answer, context=formatter_context)
@@ -3247,9 +3319,6 @@ class ChatService:
                 context=formatter_context,
             )
         )
-
-        if language == "ar":
-            answer = sanitize_cheating_penalty_scope_answer(working_question, answer)
 
         source_pool = (
             contexts_for_answer
