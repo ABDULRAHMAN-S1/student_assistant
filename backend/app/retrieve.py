@@ -1363,6 +1363,14 @@ def search(query: str, top_k: int = 4) -> list[dict[str, Any]]:
     )
     record_map = get_chunk_record_map()
     normalized_query = query_profile["normalized_query"]
+    prefer_faq_query = any(
+        term in normalized_query
+        for term in (
+            "faq",
+            "اسئله شايعه",
+            "الاسئله الشايعه",
+        )
+    )
 
     combined_matches: dict[str, dict[str, Any]] = {}
     for match in semantic_matches:
@@ -1532,6 +1540,11 @@ def search(query: str, top_k: int = 4) -> list[dict[str, Any]]:
             score += 0.1 * phrase_ratio
         elif query_profile["phrases"] and lexical_score < 0.45:
             score -= 0.08
+
+        # FAQ preference: only when user explicitly asks for FAQ/الأسئلة الشائعة.
+        # Keep the behavior narrow to avoid weakening regulation/policy retrieval.
+        if prefer_faq_query and quality_flags["is_faq"] and (phrase_ratio > 0.0 or lexical_score >= 0.55):
+            score += 0.45
 
         if query_flags["complaints"]:
             query_needs_complaint_word = any(term in normalized_query for term in ("شكوي", "شكاوي"))
@@ -1741,6 +1754,25 @@ def search(query: str, top_k: int = 4) -> list[dict[str, Any]]:
             final_ranked = strong_ranked if strong_ranked else ranked
     else:
         final_ranked = strong_ranked if strong_ranked else ranked
+
+    if prefer_faq_query and final_ranked:
+        top_doc_type = normalize_doc_type((final_ranked[0].get("metadata", {}) or {}).get("doc_type", "regulation"))
+        if top_doc_type != "faq":
+            faq_candidate = next(
+                (
+                    item
+                    for item in final_ranked
+                    if normalize_doc_type((item.get("metadata", {}) or {}).get("doc_type", "regulation")) == "faq"
+                ),
+                None,
+            )
+            if faq_candidate is not None:
+                top_lex = float(final_ranked[0].get("lexical_score", 0.0) or 0.0)
+                faq_lex = float(faq_candidate.get("lexical_score", 0.0) or 0.0)
+                if faq_lex >= (top_lex - 0.12):
+                    final_ranked = [faq_candidate] + [
+                        item for item in final_ranked if item["id"] != faq_candidate["id"]
+                    ]
 
     cleaned_ranked = []
     for item in final_ranked[:top_k]:
