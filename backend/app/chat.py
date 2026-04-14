@@ -1165,6 +1165,7 @@ def augment_contexts_for_route(
         return contexts
 
     augmented = dedupe_preserve_order_contexts(contexts)
+    mode = route.mode
 
     def add_fallback(mode: str, *, limit: int, include_question: bool = False) -> None:
         nonlocal augmented
@@ -1190,111 +1191,115 @@ def augment_contexts_for_route(
         add_fallback("penalty", limit=4)
 
 
-    # (No-op: removed misplaced import)
-        if mode == "missed_final":
-            mode_contexts = rank_contexts_by_terms(
-                contexts,
-                include_any=("غبت", "غاب", "غايب", "يغيب", "صفر", "اختبار بديل"),
-                prefer_article=("المادة الحادية والثلاثون", "المادة الثانية والثلاثون"),
-            )[:3]
-            if mode_contexts:
-                return dedupe_preserve_order_contexts(mode_contexts)
-        if mode == "penalty":
-            fallback_penalty_contexts = fallback_service.get_fallback_context("penalty", limit=3)
-            if fallback_penalty_contexts:
-                return dedupe_preserve_order_contexts(fallback_penalty_contexts)
-            penalty_pool = [
-                context
-                for context in contexts
-                if any(term in search_text(context) for term in ("الغش", "العقوبات", "حرمان", "راسب", "فصل"))
-                and "المادة الخامسة" not in search_text(context)
-            ]
-            direct_penalty_contexts = [
-                context
-                for context in penalty_pool
-                if "الماده الثامنه" in search_text(context)
-                and any(
-                    term in search_text(context)
-                    for term in (
-                        "الاختبار الدوري",
-                        "الاختبار النصفي",
-                        "الاختبار النهايي",
-                        "راسب",
-                        "الفصل من الجامعه",
-                        "الفصل النهايي من الجامعه",
-                    )
+    if mode == "missed_final":
+        mode_contexts = rank_contexts_by_terms(
+            contexts,
+            include_any=("غبت", "غاب", "غايب", "يغيب", "صفر", "اختبار بديل"),
+            prefer_article=("المادة الحادية والثلاثون", "المادة الثانية والثلاثون"),
+        )[:3]
+        if mode_contexts:
+            return dedupe_preserve_order_contexts(mode_contexts)
+    if mode == "penalty":
+        fallback_penalty_contexts = fallback_service.get_fallback_context("penalty", limit=3)
+        if fallback_penalty_contexts:
+            return dedupe_preserve_order_contexts(fallback_penalty_contexts)
+        penalty_pool = [
+            context
+            for context in contexts
+            if any(term in search_text(context) for term in ("الغش", "العقوبات", "حرمان", "راسب", "فصل"))
+            and "المادة الخامسة" not in search_text(context)
+        ]
+        direct_penalty_contexts = [
+            context
+            for context in penalty_pool
+            if "الماده الثامنه" in search_text(context)
+            and any(
+                term in search_text(context)
+                for term in (
+                    "الاختبار الدوري",
+                    "الاختبار النصفي",
+                    "الاختبار النهايي",
+                    "راسب",
+                    "الفصل من الجامعه",
+                    "الفصل النهايي من الجامعه",
                 )
-            ]
-            if direct_penalty_contexts:
-                mode_contexts = [
-                    context
-                    for context in rank_contexts_by_terms(
-                        direct_penalty_contexts,
-                        include_any=("الاختبار النهايي", "الاختبار الدوري", "الاختبار النصفي", "راسب", "المقرر", "فصل", "حرمان"),
-                        prefer_article=("الماده الثامنه",),
-                    )
-                ][:3]
-            else:
-                mode_contexts = [
-                    context
-                    for context in rank_contexts_by_terms(
-                        penalty_pool or contexts,
-                        include_any=("الغش", "العقوبات", "الاختبار النهائي", "راسب", "فصل", "حرمان"),
-                        prefer_article=("المادة الثامنة", "الإجراءات المتبعة في حالة الغش"),
-                    )
-                ][:3]
-            if mode_contexts:
-                return dedupe_preserve_order_contexts(mode_contexts)
-        if mode == "lecture_recording":
-            mode_contexts = rank_contexts_by_terms(
-                contexts,
-                require_all=("تصوير", "محاضر"),
-                include_any=("موافقه", "موافقة", "تسجيل"),
-            )[:2]
-            if mode_contexts:
-                return dedupe_preserve_order_contexts(mode_contexts)
-
-        normalized_question = normalize_for_matching(question)
-        if "ضوابط" in normalized_question and any(term in normalized_question for term in ("جهه", "مسوول", "مختص")):
-            authority_contexts = [
+            )
+        ]
+        if direct_penalty_contexts:
+            mode_contexts = [
                 context
                 for context in rank_contexts_by_terms(
-                    contexts,
-                    include_any=("الجهة المسؤولة", "مسؤولية متابعة تنفيذ", "تتولى عمادة شؤون الطلاب"),
-                    prefer_article=("الماده الثامنه", "الجهه المسووله"),
-                )
-                if any(
-                    term in search_text(context)
-                    for term in ("الجهه المسووله", "مسووليه متابعه تنفيذ", "تتولي عماده شؤون الطلاب")
-                )
-            ][:2]
-            if authority_contexts:
-                return dedupe_preserve_order_contexts(authority_contexts)
-
-        if (
-            list_like_question_kind(question) == "rules"
-            and "ضوابط" in normalized_question
-            and any(term in normalized_question for term in ("الزي", "مظهر"))
-            and not any(term in normalized_question for term in ("جهه", "مسوول", "مختص", "لجنه", "احال", "تحويل"))
-        ):
-            dress_rule_contexts = [
-                context
-                for context in rank_contexts_by_terms(
-                    contexts,
-                    include_any=("ارتداء", "ملابس", "اكسسوارات", "رسومات", "شعارات", "الشورت", "المظهر العام"),
-                    prefer_article=("الماده العاشره",),
-                )
-                if any(
-                    term in search_text(context)
-                    for term in ("ارتداء", "ملابس", "اكسسوارات", "رسومات", "شعارات", "الشورت")
-                )
-                and not any(
-                    term in search_text(context)
-                    for term in ("نموذج", "الحقول", "توقيع", "اقر", "الرقم الجامعي")
+                    direct_penalty_contexts,
+                    include_any=("الاختبار النهايي", "الاختبار الدوري", "الاختبار النصفي", "راسب", "المقرر", "فصل", "حرمان"),
+                    prefer_article=("الماده الثامنه",),
                 )
             ][:3]
-            if dress_rule_contexts:
-                return dedupe_preserve_order_contexts(dress_rule_contexts)
+        else:
+            mode_contexts = [
+                context
+                for context in rank_contexts_by_terms(
+                    penalty_pool or contexts,
+                    include_any=("الغش", "العقوبات", "الاختبار النهائي", "راسب", "فصل", "حرمان"),
+                    prefer_article=("المادة الثامنة", "الإجراءات المتبعة في حالة الغش"),
+                )
+            ][:3]
+        if mode_contexts:
+            return dedupe_preserve_order_contexts(mode_contexts)
+    if mode == "lecture_recording":
+        # Strict: reject contexts that only mention lectures/schedules but not recording.
+        recording_contexts: list[dict[str, Any]] = []
+        for context in contexts:
+            text = normalize_for_matching(context_search_text(context))
+            if not any(term in text for term in ("تصوير", "تسجيل")):
+                continue
+            if not any(term in text for term in ("محاضر", "محاضره", "محاضرة")):
+                continue
+            recording_contexts.append(context)
+        if recording_contexts:
+            return dedupe_preserve_order_contexts(recording_contexts[:2])
+        return []
+
+    normalized_question = normalize_for_matching(question)
+    if "ضوابط" in normalized_question and any(term in normalized_question for term in ("جهه", "مسوول", "مختص")):
+        authority_contexts = [
+            context
+            for context in rank_contexts_by_terms(
+                contexts,
+                include_any=("الجهة المسؤولة", "مسؤولية متابعة تنفيذ", "تتولى عمادة شؤون الطلاب"),
+                prefer_article=("الماده الثامنه", "الجهه المسووله"),
+            )
+            if any(
+                term in search_text(context)
+                for term in ("الجهه المسووله", "مسووليه متابعه تنفيذ", "تتولي عماده شؤون الطلاب")
+            )
+        ][:2]
+        if authority_contexts:
+            return dedupe_preserve_order_contexts(authority_contexts)
+
+    if (
+        list_like_question_kind(question) == "rules"
+        and "ضوابط" in normalized_question
+        and any(term in normalized_question for term in ("الزي", "مظهر"))
+        and not any(term in normalized_question for term in ("جهه", "مسوول", "مختص", "لجنه", "احال", "تحويل"))
+    ):
+        dress_rule_contexts = [
+            context
+            for context in rank_contexts_by_terms(
+                contexts,
+                include_any=("ارتداء", "ملابس", "اكسسوارات", "رسومات", "شعارات", "الشورت", "المظهر العام"),
+                prefer_article=("الماده العاشره",),
+            )
+            if any(
+                term in search_text(context)
+                for term in ("ارتداء", "ملابس", "اكسسوارات", "رسومات", "شعارات", "الشورت")
+            )
+            and not any(
+                term in search_text(context)
+                for term in ("نموذج", "الحقول", "توقيع", "اقر", "الرقم الجامعي")
+            )
+        ][:3]
+        if dress_rule_contexts:
+            return dedupe_preserve_order_contexts(dress_rule_contexts)
 
     query_profile = build_query_profile_for_answer(question, language)
     mode_priority: dict[str, float] = {}
@@ -3039,6 +3044,33 @@ def build_english_answer(arabic_answer: str, reference: str) -> str:
     return formatter.build_english_answer(arabic_answer, reference, context=_formatter_context())
 
 
+def sanitize_cheating_penalty_scope_answer(question: str, answer: str) -> str:
+    """
+    Single source of truth for excluding unrelated terms from cheating penalty answers.
+    - Always remove housing-related terms.
+    - For exam-scoped cheating questions, also remove non-exam items (work/research/report/homework).
+    """
+    is_cheating_penalty_question = (
+        list_like_question_kind(question) == "penalties"
+        and penalty_question_domain(question) == "cheating"
+    )
+    if not is_cheating_penalty_question:
+        return answer
+
+    normalized_question = normalize_for_matching(question)
+
+    housing_terms = ("سكن", "اسكان", "الاسكان", "الاقامه بالسكن", "الاقامة بالسكن")
+    for term in housing_terms:
+        answer = answer.replace(term, "")
+
+    if "اختبار" in normalized_question:
+        non_exam_terms = ("العمل", "البحث", "التقرير", "الواجب")
+        for term in non_exam_terms:
+            answer = answer.replace(term, "")
+
+    return re.sub(r"\s+", " ", answer).strip()
+
+
 def compose_arabic_response(
     question: str,
     contexts: list[dict[str, Any]],
@@ -3203,8 +3235,10 @@ class ChatService:
         formatter_context.unclear = unclear
         formatter_context.route = route
         formatter_context.answer_state = answer_state
+        contexts_for_answer = filtered_contexts
+
         answer = (
-            self.formatter.build_arabic_answer(working_question, filtered_contexts, context=formatter_context)
+            self.formatter.build_arabic_answer(working_question, contexts_for_answer, context=formatter_context)
             if language == "ar"
             else self.formatter.format_answer(
                 direct_arabic_answer,
@@ -3214,8 +3248,11 @@ class ChatService:
             )
         )
 
+        if language == "ar":
+            answer = sanitize_cheating_penalty_scope_answer(working_question, answer)
+
         source_pool = (
-            filtered_contexts
+            contexts_for_answer
             if list_like_question_kind(working_question) is not None
             else (used_contexts if used_contexts else filtered_contexts[:top_k])
         )

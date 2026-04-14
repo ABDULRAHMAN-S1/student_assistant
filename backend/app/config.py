@@ -54,6 +54,8 @@ class Settings:
     refresh_token_ttl_seconds: int
     require_https: bool
     trust_forwarded_proto: bool
+    trust_forwarded_for: bool
+    trusted_proxy_ips: tuple[str, ...]
     enable_api_docs: bool
     enable_translation: bool
     allow_external_translation: bool
@@ -103,6 +105,8 @@ def get_settings() -> Settings:
         refresh_token_ttl_seconds=_read_int("REFRESH_TOKEN_TTL_SECONDS", 604800),
         require_https=_read_bool("REQUIRE_HTTPS", app_env == "production"),
         trust_forwarded_proto=_read_bool("TRUST_FORWARDED_PROTO", True),
+        trust_forwarded_for=_read_bool("TRUST_FORWARDED_FOR", False),
+        trusted_proxy_ips=_read_list("TRUSTED_PROXY_IPS"),
         enable_api_docs=_read_bool("ENABLE_API_DOCS", app_env != "production"),
         enable_translation=_read_bool("ENABLE_TRANSLATION", False),
         allow_external_translation=_read_bool("ALLOW_EXTERNAL_TRANSLATION", False),

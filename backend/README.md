@@ -108,6 +108,12 @@ GET /health
 
 This endpoint is authenticated.
 
+For unauthenticated availability probing (e.g. Flutter before login), use:
+
+```bash
+GET /public/health
+```
+
 Expected response:
 
 ```json

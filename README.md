@@ -56,6 +56,8 @@ Default behavior:
 - Android emulator: `http://10.0.2.2:8000`
 - Other platforms: `http://127.0.0.1:8000`
 
+The app probes backend availability using `GET /public/health` (no auth).
+
 For release builds, use HTTPS:
 
 ```bash

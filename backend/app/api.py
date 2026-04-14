@@ -48,6 +48,7 @@ RATE_LIMIT_RULES = {
     "/search": (40, 60),
     "/feedback": (20, 60),
     "/translate": (15, 60),
+    "/public/health": (60, 60),
     "/health": (20, 60),
     "/users": (20, 60),
 }
@@ -107,10 +108,12 @@ def trim_required_text(value: str, *, field_name: str) -> str:
 def client_identity(request: Request, user: AuthenticatedUser | None = None) -> str:
     if user is not None:
         return user.user_id
-    if settings.trust_forwarded_proto:
-        forwarded_for = request.headers.get("x-forwarded-for", "").split(",")[0].strip()
-        if forwarded_for:
-            return forwarded_for
+    if settings.trust_forwarded_for:
+        client_host = request.client.host if request.client else ""
+        if client_host and (not settings.trusted_proxy_ips or client_host in settings.trusted_proxy_ips):
+            forwarded_for = request.headers.get("x-forwarded-for", "").split(",")[0].strip()
+            if forwarded_for:
+                return forwarded_for
     if request.client and request.client.host:
         return request.client.host
     return "unknown"
@@ -265,6 +268,16 @@ def health(http_request: Request, current_user: AuthenticatedUser = Depends(requ
         "version": settings.api_version,
         "user": current_user.email,
         "role": current_user.role,
+    }
+
+
+@app.get("/public/health")
+def public_health(http_request: Request) -> dict[str, object]:
+    enforce_rate_limit(http_request)
+    return {
+        "status": "ok",
+        "ready": True,
+        "version": settings.api_version,
     }
 
 

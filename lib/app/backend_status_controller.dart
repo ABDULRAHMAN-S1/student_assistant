@@ -104,9 +104,10 @@ class BackendStatusController extends ChangeNotifier {
   }
 
   static Future<bool> _defaultProbe() async {
-    final uri = buildApiUri('/health');
-    final response = await http.head(uri).timeout(const Duration(seconds: 3));
-    return response.statusCode >= 100 && response.statusCode < 600;
+    // Must work before login; use a public endpoint and require a successful response.
+    final uri = buildApiUri('/public/health');
+    final response = await http.get(uri).timeout(const Duration(seconds: 3));
+    return response.statusCode >= 200 && response.statusCode < 300;
   }
 
   @override
