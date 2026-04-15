@@ -1,8 +1,30 @@
 {
   "output_file": "data\\processed\\taibah_regulations.jsonl",
-  "document_count": 11,
-  "chunk_count": 518,
+  "document_count": 12,
+  "chunk_count": 576,
   "documents": [
+    {
+      "source_file": "faq.txt",
+      "detected_title": "ماهو نظام القبول في الجامعة وماذا يعني القبول السنوي؟",
+      "doc_type": "faq",
+      "language": "ar",
+      "number_of_chunks": 58,
+      "source_hash": "570000137dba292bdd9ce7d3f4a9f447878208630dcfd3da6054a1080e7a9b00",
+      "cleaned_hash": "5354ae00fcc0df5f4eb98828aa8e8d47044fd8f3d1947e7863bb0303594f6743",
+      "status": "complete",
+      "qa_summary": {
+        "heading_only_removed": 0,
+        "duplicate_chunks_removed": 0,
+        "tiny_chunks_flagged": 18,
+        "partial_chunks_flagged": 0,
+        "missing_metadata_flagged": 1
+      },
+      "notes": [
+        "العنوان تم التقاطه من بداية النص.",
+        "تم وسم 18 مقطعًا قصيرًا منخفض الإشارة للمراجعة.",
+        "تم وسم 1 مقطعًا بنقص في محددات التتبع أو العنوان."
+      ]
+    },
     {
       "source_file": "general_education_elective_courses_policy_cleaned.txt",
       "detected_title": "دليل ضوابط إنشاء وتسجيل مقررات المتطلبات العامة والمقررات الحرة بجامعة طيبة",
