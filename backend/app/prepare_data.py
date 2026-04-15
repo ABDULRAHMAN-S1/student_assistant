@@ -596,10 +596,13 @@ def build_entries(
             return
 
         status = "partial" if UNREADABLE_PLACEHOLDER in content else "complete"
+        entry_document_title = document_title
+        if doc_type == "faq" and current_article:
+            entry_document_title = current_article
         entries.append(
             {
                 "source_file": source_file,
-                "document_title": document_title,
+                "document_title": entry_document_title,
                 "doc_type": doc_type,
                 "language": language,
                 "section": current_section,

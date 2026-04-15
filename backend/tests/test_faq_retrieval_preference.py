@@ -9,6 +9,7 @@ BACKEND_ROOT = Path(__file__).resolve().parents[1]
 if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
+from app.prepare_data import build_entries
 from app.retrieve import light_stem, normalize_for_matching, search, tokenize_text
 
 
@@ -46,6 +47,30 @@ def _make_record(
 
 
 class FaqRetrievalPreferenceTests(unittest.TestCase):
+    def test_faq_chunks_use_question_as_document_title(self) -> None:
+        lines = [
+            "كيف أبحث عن تحويلة موظف؟",
+            "عن طريق الدخول إلى دليل المنسوبين.",
+            "",
+            "هل يمكن للطالب/ــة الحصول على العشرة ريالات التي تحسم من المكافأة لصالح صندوق الطالب؟",
+            "لا يمكن الحصول عليها.",
+        ]
+
+        entries = build_entries(
+            "faq.txt",
+            "ماهو نظام القبول في الجامعة وماذا يعني القبول السنوي؟",
+            "faq",
+            "ar",
+            lines,
+        )
+
+        self.assertEqual(len(entries), 2)
+        self.assertEqual(entries[0]["document_title"], "كيف أبحث عن تحويلة موظف؟")
+        self.assertEqual(
+            entries[1]["document_title"],
+            "هل يمكن للطالب/ــة الحصول على العشرة ريالات التي تحسم من المكافأة لصالح صندوق الطالب؟",
+        )
+
     def test_strong_faq_like_query_can_retrieve_faq_doc_type(self) -> None:
         faq = _make_record(
             record_id="faq-1",
