@@ -10,27 +10,33 @@ from fastapi.responses import JSONResponse
 
 try:
     from app.auth_service import AuthenticatedUser, authenticate_user, list_users, refresh_session, register_user, require_authenticated_user, require_role, update_user_role
-    from app.chat import answer_question
     from app.config import get_settings
     from app.database import init_database, insert_feedback
     from app.engagement_service import (
         create_live_content,
+        delete_device_token,
         generate_notifications_for_user,
+        get_notification_preferences,
         get_personalized_feed,
         get_student_profile,
         mark_notification_as_read,
+        register_device_token,
+        update_notification_preferences,
         update_student_profile,
     )
     from app.logging_utils import configure_logging
     from app.rate_limit import RateLimiter
-    from app.retrieve import (
-        search,
-    )
     from app.schemas import (
         ChatRequest,
+        DeviceTokenEnvelopeResponse,
+        DeviceTokenRegisterRequest,
         FeedbackRequest,
         LiveContentCreateRequest,
         LoginRequest,
+        NotificationGenerateResponse,
+        NotificationPreferencesResponse,
+        NotificationPreferencesUpdateRequest,
+        NotificationReadResponse,
         RefreshRequest,
         RegisterRequest,
         SearchRequest,
@@ -41,27 +47,33 @@ try:
     from app.translation_service import TranslationUnavailable, translate_text
 except ImportError:
     from auth_service import AuthenticatedUser, authenticate_user, list_users, refresh_session, register_user, require_authenticated_user, require_role, update_user_role  # type: ignore
-    from chat import answer_question  # type: ignore
     from config import get_settings  # type: ignore
     from database import init_database, insert_feedback  # type: ignore
     from engagement_service import (  # type: ignore
         create_live_content,
+        delete_device_token,
         generate_notifications_for_user,
+        get_notification_preferences,
         get_personalized_feed,
         get_student_profile,
         mark_notification_as_read,
+        register_device_token,
+        update_notification_preferences,
         update_student_profile,
     )
     from logging_utils import configure_logging  # type: ignore
     from rate_limit import RateLimiter  # type: ignore
-    from retrieve import (  # type: ignore
-        search,
-    )
     from schemas import (  # type: ignore
         ChatRequest,
+        DeviceTokenEnvelopeResponse,
+        DeviceTokenRegisterRequest,
         FeedbackRequest,
         LiveContentCreateRequest,
         LoginRequest,
+        NotificationGenerateResponse,
+        NotificationPreferencesResponse,
+        NotificationPreferencesUpdateRequest,
+        NotificationReadResponse,
         RefreshRequest,
         RegisterRequest,
         SearchRequest,
@@ -93,6 +105,9 @@ RATE_LIMIT_RULES = {
     "/engagement/feed": (20, 60),
     "/engagement/content": (20, 60),
     "/engagement/notifications/generate": (10, 60),
+    "/engagement/notifications/preferences": (20, 60),
+    "/engagement/device-tokens": (20, 60),
+    "/engagement/notifications/read": (30, 60),
 }
 
 
@@ -109,7 +124,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=list(settings.cors_origins),
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PATCH", "OPTIONS"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type", "Accept", "X-Request-ID"],
 )
 
@@ -172,12 +187,17 @@ def serialize_current_user(current_user: AuthenticatedUser) -> dict[str, str]:
 
 
 def enforce_rate_limit(request: Request, *, user: AuthenticatedUser | None = None) -> None:
-    rule = RATE_LIMIT_RULES.get(request.url.path)
+    path = request.url.path
+    rule = RATE_LIMIT_RULES.get(path)
+    if rule is None and path.startswith("/engagement/notifications/") and path.endswith("/read"):
+        rule = RATE_LIMIT_RULES.get("/engagement/notifications/read")
+    if rule is None and path.startswith("/engagement/device-tokens/"):
+        rule = RATE_LIMIT_RULES.get("/engagement/device-tokens")
     if not rule:
         return
     limit, window_seconds = rule
     rate_limiter.enforce(
-        route_key=request.url.path,
+        route_key=path,
         actor_key=client_identity(request, user),
         limit=limit,
         window_seconds=window_seconds,
@@ -329,6 +349,7 @@ def get_feed(
     http_request: Request,
     include_read: bool = False,
     limit: int = 20,
+    cursor: str | None = None,
     current_user: AuthenticatedUser = Depends(require_authenticated_user),
 ) -> dict[str, object]:
     enforce_rate_limit(http_request, user=current_user)
@@ -337,6 +358,7 @@ def get_feed(
         user_id=current_user.user_id,
         include_read=include_read,
         limit=bounded_limit,
+        cursor=cursor,
     )
 
 
@@ -352,10 +374,70 @@ def post_generate_notifications(
         user_id=current_user.user_id,
         limit=bounded_limit,
     )
-    return {
-        "status": "ok",
-        "generated_count": generated_count,
-    }
+    return NotificationGenerateResponse(generated_count=generated_count).model_dump()
+
+
+@app.get("/engagement/notifications/preferences")
+def get_notification_preferences_endpoint(
+    http_request: Request,
+    current_user: AuthenticatedUser = Depends(require_authenticated_user),
+) -> dict[str, object]:
+    enforce_rate_limit(http_request, user=current_user)
+    return NotificationPreferencesResponse.model_validate(
+        get_notification_preferences(user_id=current_user.user_id)
+    ).model_dump()
+
+
+@app.put("/engagement/notifications/preferences")
+def put_notification_preferences(
+    http_request: Request,
+    request: NotificationPreferencesUpdateRequest,
+    current_user: AuthenticatedUser = Depends(require_authenticated_user),
+) -> dict[str, object]:
+    enforce_rate_limit(http_request, user=current_user)
+    return NotificationPreferencesResponse.model_validate(
+        update_notification_preferences(
+            user_id=current_user.user_id,
+            enable_push=request.enable_push,
+            enable_in_app=request.enable_in_app,
+            categories=[item.model_dump() for item in request.categories],
+        )
+    ).model_dump()
+
+
+@app.post("/engagement/device-tokens")
+def post_device_token(
+    http_request: Request,
+    request: DeviceTokenRegisterRequest,
+    current_user: AuthenticatedUser = Depends(require_authenticated_user),
+) -> dict[str, object]:
+    enforce_rate_limit(http_request, user=current_user)
+    payload = register_device_token(
+        user_id=current_user.user_id,
+        token=request.token,
+        platform=request.platform,
+        device_name=request.device_name,
+        app_version=request.app_version,
+        locale=request.locale,
+    )
+    return DeviceTokenEnvelopeResponse(token=payload).model_dump()
+
+
+@app.delete("/engagement/device-tokens/{token_id}")
+def delete_device_token_endpoint(
+    token_id: str,
+    http_request: Request,
+    current_user: AuthenticatedUser = Depends(require_authenticated_user),
+) -> dict[str, object]:
+    enforce_rate_limit(http_request, user=current_user)
+    deleted = delete_device_token(user_id=current_user.user_id, token_id=token_id)
+    if not deleted:
+        raise_api_error(
+            status_code=404,
+            code="device_token_not_found",
+            message="Device token was not found.",
+        )
+    return {"status": "ok"}
 
 
 @app.patch("/engagement/notifications/{notification_id}/read")
@@ -365,17 +447,17 @@ def patch_notification_read(
     current_user: AuthenticatedUser = Depends(require_authenticated_user),
 ) -> dict[str, object]:
     enforce_rate_limit(http_request, user=current_user)
-    changed = mark_notification_as_read(
+    payload = mark_notification_as_read(
         user_id=current_user.user_id,
         notification_id=notification_id,
     )
-    if not changed:
+    if payload is None:
         raise_api_error(
             status_code=404,
             code="notification_not_found",
             message="Notification was not found.",
         )
-    return {"status": "ok"}
+    return NotificationReadResponse.model_validate(payload).model_dump()
 
 
 @app.get("/admin")
@@ -444,6 +526,10 @@ def chat(
     enforce_rate_limit(http_request, user=current_user)
     question = trim_required_text(request.question, field_name="question")
     try:
+        from app.chat import answer_question
+    except ImportError:
+        from chat import answer_question  # type: ignore
+    try:
         return answer_question(question, top_k=request.top_k)
     except RuntimeError as exc:
         raise_api_error(status_code=400, code="bad_request", message=str(exc))
@@ -457,6 +543,10 @@ def regulation_search(
 ) -> dict[str, object]:
     enforce_rate_limit(http_request, user=current_user)
     query = trim_required_text(request.query, field_name="query")
+    try:
+        from app.retrieve import search
+    except ImportError:
+        from retrieve import search  # type: ignore
     try:
         matches = search(query, top_k=request.top_k)
     except RuntimeError as exc:

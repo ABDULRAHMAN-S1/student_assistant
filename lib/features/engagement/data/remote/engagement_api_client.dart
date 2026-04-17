@@ -9,8 +9,10 @@ import '../../../../app/app_settings_store.dart';
 import '../../../auth/data/remote/auth_api_client.dart';
 import '../../../auth/domain/models/auth_session.dart';
 import '../../domain/models/engagement_feed.dart';
+import '../../domain/models/notification_device_token.dart';
+import '../../domain/models/notification_preferences.dart';
+import '../../domain/models/notification_read_result.dart';
 import '../../domain/models/student_engagement_profile.dart';
-import '../repositories/engagement_repository.dart';
 import 'map_feed_response.dart';
 
 enum EngagementApiErrorKind {
@@ -40,10 +42,14 @@ class EngagementApiException implements Exception {
   String toString() => message;
 }
 
-class EngagementApiClient implements EngagementRepository {
+class EngagementApiClient {
   const EngagementApiClient();
 
-  @override
+  Future<String?> currentUserId() async {
+    final settingsStore = await AppSettingsStore.open();
+    return settingsStore.readAuthSession()?.userId;
+  }
+
   Future<int> generateNotifications({int limit = 20}) async {
     final payload = await _authorizedRequest(
       'POST',
@@ -56,10 +62,10 @@ class EngagementApiClient implements EngagementRepository {
     return (payload['generated_count'] as num?)?.toInt() ?? 0;
   }
 
-  @override
   Future<EngagementFeed> getFeed({
     bool includeRead = false,
     int limit = 20,
+    String? cursor,
   }) async {
     final payload = await _authorizedRequest(
       'GET',
@@ -67,6 +73,7 @@ class EngagementApiClient implements EngagementRepository {
       query: {
         'include_read': includeRead ? 'true' : 'false',
         'limit': limit.toString(),
+        if (cursor != null && cursor.isNotEmpty) 'cursor': cursor,
       },
     );
     if (payload is! Map<String, dynamic>) {
@@ -78,15 +85,20 @@ class EngagementApiClient implements EngagementRepository {
     return mapFeedResponse(payload);
   }
 
-  @override
-  Future<void> markNotificationRead(String notificationId) async {
-    await _authorizedRequest(
+  Future<NotificationReadResult> markNotificationRead(String notificationId) async {
+    final payload = await _authorizedRequest(
       'PATCH',
       '/engagement/notifications/$notificationId/read',
     );
+    if (payload is! Map<String, dynamic>) {
+      throw const EngagementApiException(
+        'Invalid mark-as-read response.',
+        kind: EngagementApiErrorKind.invalidResponse,
+      );
+    }
+    return mapNotificationReadResponse(payload);
   }
 
-  @override
   Future<StudentEngagementProfile> getProfile() async {
     final payload = await _authorizedRequest('GET', '/engagement/profile');
     if (payload is! Map<String, dynamic>) {
@@ -105,7 +117,6 @@ class EngagementApiClient implements EngagementRepository {
     return mapEngagementProfile(profile);
   }
 
-  @override
   Future<StudentEngagementProfile> updateProfile({
     required String major,
     required String academicLevel,
@@ -136,6 +147,98 @@ class EngagementApiClient implements EngagementRepository {
       );
     }
     return mapEngagementProfile(profile);
+  }
+
+  Future<NotificationPreferences> getNotificationPreferences() async {
+    final payload = await _authorizedRequest(
+      'GET',
+      '/engagement/notifications/preferences',
+    );
+    if (payload is! Map<String, dynamic>) {
+      throw const EngagementApiException(
+        'Invalid notification preferences response.',
+        kind: EngagementApiErrorKind.invalidResponse,
+      );
+    }
+    final preferences = payload['preferences'];
+    if (preferences is! Map<String, dynamic>) {
+      throw const EngagementApiException(
+        'Invalid notification preferences response.',
+        kind: EngagementApiErrorKind.invalidResponse,
+      );
+    }
+    return mapNotificationPreferences(preferences);
+  }
+
+  Future<NotificationPreferences> updateNotificationPreferences({
+    bool? enablePush,
+    bool? enableInApp,
+    List<NotificationCategoryPreferenceUpdate> categories = const [],
+  }) async {
+    final payload = await _authorizedRequest(
+      'PUT',
+      '/engagement/notifications/preferences',
+      body: {
+        if (enablePush != null) 'enable_push': enablePush,
+        if (enableInApp != null) 'enable_in_app': enableInApp,
+        'categories': categories.map((item) => item.toJson()).toList(),
+      },
+    );
+    if (payload is! Map<String, dynamic>) {
+      throw const EngagementApiException(
+        'Invalid notification preferences response.',
+        kind: EngagementApiErrorKind.invalidResponse,
+      );
+    }
+    final preferences = payload['preferences'];
+    if (preferences is! Map<String, dynamic>) {
+      throw const EngagementApiException(
+        'Invalid notification preferences response.',
+        kind: EngagementApiErrorKind.invalidResponse,
+      );
+    }
+    return mapNotificationPreferences(preferences);
+  }
+
+  Future<NotificationDeviceToken> registerDeviceToken({
+    required String token,
+    required String platform,
+    String deviceName = '',
+    String appVersion = '',
+    String locale = '',
+  }) async {
+    final payload = await _authorizedRequest(
+      'POST',
+      '/engagement/device-tokens',
+      body: {
+        'token': token,
+        'platform': platform,
+        'device_name': deviceName,
+        'app_version': appVersion,
+        'locale': locale,
+      },
+    );
+    if (payload is! Map<String, dynamic>) {
+      throw const EngagementApiException(
+        'Invalid device token response.',
+        kind: EngagementApiErrorKind.invalidResponse,
+      );
+    }
+    final deviceToken = payload['device_token'];
+    if (deviceToken is! Map<String, dynamic>) {
+      throw const EngagementApiException(
+        'Invalid device token response.',
+        kind: EngagementApiErrorKind.invalidResponse,
+      );
+    }
+    return mapNotificationDeviceToken(deviceToken);
+  }
+
+  Future<void> deleteDeviceToken(String deviceTokenId) async {
+    await _authorizedRequest(
+      'DELETE',
+      '/engagement/device-tokens/$deviceTokenId',
+    );
   }
 
   Future<dynamic> _authorizedRequest(
@@ -222,6 +325,14 @@ class EngagementApiClient implements EngagementRepository {
         case 'PATCH':
           return await http
               .patch(
+                uri,
+                headers: headers,
+                body: jsonEncode(body ?? const <String, Object?>{}),
+              )
+              .timeout(const Duration(seconds: 25));
+        case 'DELETE':
+          return await http
+              .delete(
                 uri,
                 headers: headers,
                 body: jsonEncode(body ?? const <String, Object?>{}),

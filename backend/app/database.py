@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import json
 import sqlite3
 from contextlib import contextmanager
@@ -134,6 +135,35 @@ def init_database() -> None:
 
             CREATE INDEX IF NOT EXISTS idx_notifications_user_read_created
             ON notifications(user_id, is_read, created_at DESC);
+
+            CREATE TABLE IF NOT EXISTS notification_preferences (
+                user_id TEXT PRIMARY KEY,
+                enable_push INTEGER NOT NULL DEFAULT 1,
+                enable_in_app INTEGER NOT NULL DEFAULT 1,
+                categories_json TEXT NOT NULL DEFAULT '[]',
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS notification_device_tokens (
+                id TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL,
+                token TEXT NOT NULL,
+                token_hash TEXT NOT NULL UNIQUE,
+                platform TEXT NOT NULL,
+                device_name TEXT NOT NULL DEFAULT '',
+                app_version TEXT NOT NULL DEFAULT '',
+                locale TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                last_seen_at TEXT NOT NULL,
+                invalidated_at TEXT,
+                invalidation_reason TEXT,
+                FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_notification_device_tokens_user_active
+            ON notification_device_tokens(user_id, invalidated_at, updated_at DESC);
             """
         )
         user_columns = {
@@ -164,6 +194,20 @@ def init_database() -> None:
         }
         if "track" not in profile_columns:
             connection.execute("ALTER TABLE student_profiles ADD COLUMN track TEXT NOT NULL DEFAULT ''")
+
+        notification_columns = {
+            row["name"]
+            for row in connection.execute("PRAGMA table_info(notifications)").fetchall()
+        }
+        for col, definition in [
+            ("route_type", "TEXT NOT NULL DEFAULT 'engagement'"),
+            ("route_payload_json", "TEXT NOT NULL DEFAULT '{}'"),
+            ("delivered_at", "TEXT"),
+            ("push_status", "TEXT NOT NULL DEFAULT 'pending'"),
+            ("last_delivery_error", "TEXT"),
+        ]:
+            if col not in notification_columns:
+                connection.execute(f"ALTER TABLE notifications ADD COLUMN {col} {definition}")
 
 
 def fetch_user_by_email(email: str) -> dict[str, Any] | None:
@@ -440,15 +484,18 @@ def insert_notification(
     content_item_id: str | None,
     priority: int,
     metadata: dict[str, Any],
+    route_type: str,
+    route_payload: dict[str, Any],
 ) -> bool:
     with connection_scope() as connection:
         cursor = connection.execute(
             """
             INSERT OR IGNORE INTO notifications (
                 id, user_id, category, title, message, content_item_id, priority,
-                is_read, metadata_json, created_at, read_at
+                is_read, metadata_json, created_at, read_at, route_type, route_payload_json,
+                delivered_at, push_status, last_delivery_error
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, NULL)
+            VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, NULL, ?, ?, NULL, 'pending', NULL)
             """,
             (
                 notification_id,
@@ -460,33 +507,109 @@ def insert_notification(
                 priority,
                 json.dumps(metadata, ensure_ascii=False),
                 _timestamp(),
+                route_type,
+                json.dumps(route_payload, ensure_ascii=False),
             ),
         )
     return bool(cursor.rowcount)
 
 
-def list_notifications(*, user_id: str, limit: int = 20, unread_only: bool = False) -> list[dict[str, Any]]:
+def _decode_notification_row(row: sqlite3.Row) -> dict[str, Any]:
+    payload = dict(row)
+    metadata = json.loads(payload.pop("metadata_json") or "{}")
+    route = {
+        "type": payload.pop("route_type", "engagement") or "engagement",
+        "payload": json.loads(payload.pop("route_payload_json", "{}") or "{}"),
+    }
+    metadata["route"] = route
+    payload["metadata"] = metadata
+    payload["is_read"] = bool(payload["is_read"])
+    return payload
+
+
+def _encode_feed_cursor(*, priority: int, created_at: str, notification_id: str) -> str:
+    raw = f"{priority}|{created_at}|{notification_id}"
+    return base64.urlsafe_b64encode(raw.encode("utf-8")).decode("ascii")
+
+
+def _decode_feed_cursor(cursor: str) -> tuple[int, str, str]:
+    decoded = base64.urlsafe_b64decode(cursor.encode("ascii")).decode("utf-8")
+    priority_text, created_at, notification_id = decoded.split("|", 2)
+    return int(priority_text), created_at, notification_id
+
+
+def fetch_notification(notification_id: str, *, user_id: str) -> dict[str, Any] | None:
+    with connection_scope() as connection:
+        row = connection.execute(
+            """
+            SELECT id, user_id, category, title, message, content_item_id, priority,
+                   is_read, metadata_json, created_at, read_at, route_type, route_payload_json,
+                   delivered_at, push_status, last_delivery_error
+            FROM notifications
+            WHERE id = ? AND user_id = ?
+            LIMIT 1
+            """,
+            (notification_id, user_id),
+        ).fetchone()
+    return _decode_notification_row(row) if row else None
+
+
+def list_notifications(
+    *,
+    user_id: str,
+    limit: int = 20,
+    unread_only: bool = False,
+    cursor: str | None = None,
+) -> dict[str, Any]:
     query = """
         SELECT id, user_id, category, title, message, content_item_id, priority,
-               is_read, metadata_json, created_at, read_at
+               is_read, metadata_json, created_at, read_at, route_type, route_payload_json,
+               delivered_at, push_status, last_delivery_error
         FROM notifications
         WHERE user_id = ?
     """
     params: list[Any] = [user_id]
     if unread_only:
         query += " AND is_read = 0"
-    query += " ORDER BY priority DESC, created_at DESC LIMIT ?"
-    params.append(limit)
+    if cursor:
+        cursor_priority, cursor_created_at, cursor_id = _decode_feed_cursor(cursor)
+        query += """
+         AND (
+            priority < ?
+            OR (priority = ? AND created_at < ?)
+            OR (priority = ? AND created_at = ? AND id < ?)
+         )
+        """
+        params.extend(
+            [
+                cursor_priority,
+                cursor_priority,
+                cursor_created_at,
+                cursor_priority,
+                cursor_created_at,
+                cursor_id,
+            ]
+        )
+    query += " ORDER BY priority DESC, created_at DESC, id DESC LIMIT ?"
+    params.append(limit + 1)
 
     with connection_scope() as connection:
         rows = connection.execute(query, tuple(params)).fetchall()
-    notifications = []
-    for row in rows:
-        payload = dict(row)
-        payload["metadata"] = json.loads(payload.pop("metadata_json") or "{}")
-        payload["is_read"] = bool(payload["is_read"])
-        notifications.append(payload)
-    return notifications
+    notifications = [_decode_notification_row(row) for row in rows[:limit]]
+    has_more = len(rows) > limit
+    next_cursor = None
+    if has_more and notifications:
+        tail = notifications[-1]
+        next_cursor = _encode_feed_cursor(
+            priority=int(tail["priority"]),
+            created_at=str(tail["created_at"]),
+            notification_id=str(tail["id"]),
+        )
+    return {
+        "items": notifications,
+        "has_more": has_more,
+        "next_cursor": next_cursor,
+    }
 
 
 def count_unread_notifications(user_id: str) -> int:
@@ -509,6 +632,190 @@ def mark_notification_as_read(*, user_id: str, notification_id: str) -> bool:
             (_timestamp(), notification_id, user_id),
         )
     return bool(cursor.rowcount)
+
+
+def update_notification_delivery(
+    *,
+    notification_id: str,
+    user_id: str,
+    push_status: str,
+    delivered_at: str | None = None,
+    last_delivery_error: str | None = None,
+) -> None:
+    with connection_scope() as connection:
+        connection.execute(
+            """
+            UPDATE notifications
+            SET push_status = ?, delivered_at = ?, last_delivery_error = ?
+            WHERE id = ? AND user_id = ?
+            """,
+            (push_status, delivered_at, last_delivery_error, notification_id, user_id),
+        )
+
+
+def fetch_notification_preferences(user_id: str) -> dict[str, Any]:
+    with connection_scope() as connection:
+        row = connection.execute(
+            """
+            SELECT user_id, enable_push, enable_in_app, categories_json, updated_at
+            FROM notification_preferences
+            WHERE user_id = ?
+            LIMIT 1
+            """,
+            (user_id,),
+        ).fetchone()
+    if row is None:
+        return {
+            "user_id": user_id,
+            "enable_push": True,
+            "enable_in_app": True,
+            "categories": [],
+            "updated_at": None,
+        }
+    payload = dict(row)
+    return {
+        "user_id": payload["user_id"],
+        "enable_push": bool(payload["enable_push"]),
+        "enable_in_app": bool(payload["enable_in_app"]),
+        "categories": json.loads(payload["categories_json"] or "[]"),
+        "updated_at": payload["updated_at"],
+    }
+
+
+def upsert_notification_preferences(
+    *,
+    user_id: str,
+    enable_push: bool,
+    enable_in_app: bool,
+    categories: list[dict[str, Any]],
+) -> dict[str, Any]:
+    now = _timestamp()
+    with connection_scope() as connection:
+        connection.execute(
+            """
+            INSERT INTO notification_preferences (user_id, enable_push, enable_in_app, categories_json, updated_at)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(user_id) DO UPDATE SET
+                enable_push = excluded.enable_push,
+                enable_in_app = excluded.enable_in_app,
+                categories_json = excluded.categories_json,
+                updated_at = excluded.updated_at
+            """,
+            (
+                user_id,
+                1 if enable_push else 0,
+                1 if enable_in_app else 0,
+                json.dumps(categories, ensure_ascii=False),
+                now,
+            ),
+        )
+    return fetch_notification_preferences(user_id)
+
+
+def upsert_notification_device_token(
+    *,
+    token_id: str,
+    user_id: str,
+    token: str,
+    platform: str,
+    device_name: str,
+    app_version: str,
+    locale: str,
+) -> dict[str, Any]:
+    now = _timestamp()
+    token_hash = hash_value(token)
+    with connection_scope() as connection:
+        connection.execute(
+            """
+            INSERT INTO notification_device_tokens (
+                id, user_id, token, token_hash, platform, device_name, app_version,
+                locale, created_at, updated_at, last_seen_at, invalidated_at, invalidation_reason
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL)
+            ON CONFLICT(token_hash) DO UPDATE SET
+                user_id = excluded.user_id,
+                token = excluded.token,
+                platform = excluded.platform,
+                device_name = excluded.device_name,
+                app_version = excluded.app_version,
+                locale = excluded.locale,
+                updated_at = excluded.updated_at,
+                last_seen_at = excluded.last_seen_at,
+                invalidated_at = NULL,
+                invalidation_reason = NULL
+            """,
+            (
+                token_id,
+                user_id,
+                token,
+                token_hash,
+                platform,
+                device_name,
+                app_version,
+                locale,
+                now,
+                now,
+                now,
+            ),
+        )
+        row = connection.execute(
+            """
+            SELECT id, platform, device_name, app_version, locale, created_at, updated_at,
+                   last_seen_at, invalidated_at, invalidation_reason
+            FROM notification_device_tokens
+            WHERE token_hash = ?
+            LIMIT 1
+            """,
+            (token_hash,),
+        ).fetchone()
+    payload = dict(row) if row else {}
+    payload["is_active"] = payload.get("invalidated_at") is None
+    return payload
+
+
+def delete_notification_device_token(*, user_id: str, token_id: str) -> bool:
+    with connection_scope() as connection:
+        cursor = connection.execute(
+            "DELETE FROM notification_device_tokens WHERE id = ? AND user_id = ?",
+            (token_id, user_id),
+        )
+    return bool(cursor.rowcount)
+
+
+def list_active_notification_device_tokens(user_id: str) -> list[dict[str, Any]]:
+    with connection_scope() as connection:
+        rows = connection.execute(
+            """
+            SELECT id, token, platform, device_name, app_version, locale, created_at, updated_at,
+                   last_seen_at, invalidated_at, invalidation_reason
+            FROM notification_device_tokens
+            WHERE user_id = ? AND invalidated_at IS NULL
+            ORDER BY updated_at DESC, id DESC
+            """,
+            (user_id,),
+        ).fetchall()
+    items: list[dict[str, Any]] = []
+    for row in rows:
+        payload = dict(row)
+        payload["is_active"] = True
+        items.append(payload)
+    return items
+
+
+def invalidate_notification_device_tokens(*, token_ids: list[str], reason: str) -> None:
+    if not token_ids:
+        return
+    now = _timestamp()
+    with connection_scope() as connection:
+        placeholders = ",".join("?" for _ in token_ids)
+        connection.execute(
+            f"""
+            UPDATE notification_device_tokens
+            SET invalidated_at = ?, invalidation_reason = ?, updated_at = ?
+            WHERE id IN ({placeholders})
+            """,
+            (now, reason, now, *token_ids),
+        )
 
 
 def atomic_rate_limit_check(*, bucket_key: str, window_started_at: int, limit: int) -> bool:

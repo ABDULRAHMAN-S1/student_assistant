@@ -1,13 +1,31 @@
+import 'notification_route.dart';
+
 class NotificationMetadata {
   const NotificationMetadata({
     this.contentType,
     this.matchReasons = const [],
     this.linkUrl,
+    this.route,
   });
 
   final String? contentType;
   final List<String> matchReasons;
   final String? linkUrl;
+  final NotificationRoute? route;
+
+  NotificationMetadata copyWith({
+    String? contentType,
+    List<String>? matchReasons,
+    String? linkUrl,
+    NotificationRoute? route,
+  }) {
+    return NotificationMetadata(
+      contentType: contentType ?? this.contentType,
+      matchReasons: matchReasons ?? this.matchReasons,
+      linkUrl: linkUrl ?? this.linkUrl,
+      route: route ?? this.route,
+    );
+  }
 }
 
 class NotificationItem {
@@ -19,6 +37,7 @@ class NotificationItem {
     required this.isRead,
     required this.priority,
     required this.createdAt,
+    this.readAt,
     this.metadata,
   });
 
@@ -29,6 +48,7 @@ class NotificationItem {
   final bool isRead;
   final int priority;
   final DateTime? createdAt;
+  final DateTime? readAt;
   final NotificationMetadata? metadata;
 
   NotificationItem copyWith({
@@ -39,6 +59,7 @@ class NotificationItem {
     bool? isRead,
     int? priority,
     DateTime? createdAt,
+    DateTime? readAt,
     NotificationMetadata? metadata,
   }) {
     return NotificationItem(
@@ -49,6 +70,7 @@ class NotificationItem {
       isRead: isRead ?? this.isRead,
       priority: priority ?? this.priority,
       createdAt: createdAt ?? this.createdAt,
+      readAt: readAt ?? this.readAt,
       metadata: metadata ?? this.metadata,
     );
   }

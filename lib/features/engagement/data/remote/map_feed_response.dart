@@ -1,5 +1,10 @@
 import '../../domain/models/engagement_feed.dart';
+import '../../domain/models/engagement_feed_page.dart';
+import '../../domain/models/notification_device_token.dart';
 import '../../domain/models/notification_item.dart';
+import '../../domain/models/notification_preferences.dart';
+import '../../domain/models/notification_read_result.dart';
+import '../../domain/models/notification_route.dart';
 import '../../domain/models/student_engagement_profile.dart';
 import '../../domain/models/suggestion_item.dart';
 
@@ -23,12 +28,20 @@ EngagementFeed mapFeedResponse(Map<String, dynamic> payload) {
       (payload['unread_count'] as num?)?.toInt() ??
       notifications.where((item) => !item.isRead).length;
   final generatedCount = (payload['generated_count'] as num?)?.toInt() ?? 0;
+  final pageRaw = payload['page'];
+  final page = pageRaw is Map<String, dynamic>
+      ? EngagementFeedPage(
+          hasMore: pageRaw['has_more'] == true,
+          nextCursor: _asStringOrNull(pageRaw['next_cursor']),
+        )
+      : const EngagementFeedPage();
 
   return EngagementFeed(
     notifications: notifications,
     suggestions: suggestions,
     unreadCount: unreadCount,
     generatedCount: generatedCount,
+    page: page,
   );
 }
 
@@ -49,6 +62,7 @@ NotificationItem _mapNotification(Map<String, dynamic> json) {
           contentType: _asStringOrNull(metadataRaw['content_type']),
           matchReasons: _stringList(metadataRaw['match_reasons']),
           linkUrl: _asStringOrNull(metadataRaw['link_url']),
+          route: _mapNotificationRoute(metadataRaw['route']),
         )
       : null;
 
@@ -60,7 +74,65 @@ NotificationItem _mapNotification(Map<String, dynamic> json) {
     isRead: json['is_read'] == true,
     priority: (json['priority'] as num?)?.toInt() ?? 0,
     createdAt: _asDateTime(json['created_at']),
+    readAt: _asDateTime(json['read_at']),
     metadata: metadata,
+  );
+}
+
+NotificationReadResult mapNotificationReadResult(Map<String, dynamic> json) {
+  final notificationRaw = json['notification'];
+  return NotificationReadResult(
+    notification: notificationRaw is Map<String, dynamic>
+        ? _mapNotification(notificationRaw)
+        : null,
+    unreadCount: (json['unread_count'] as num?)?.toInt() ?? 0,
+    status: (json['status'] ?? 'ok').toString(),
+  );
+}
+
+NotificationPreferences mapNotificationPreferences(Map<String, dynamic> json) {
+  final categoriesRaw = json['categories'];
+  return NotificationPreferences(
+    enablePush: json['enable_push'] != false,
+    enableInApp: json['enable_in_app'] != false,
+    updatedAt: _asDateTime(json['updated_at']),
+    categories: categoriesRaw is List
+        ? categoriesRaw
+              .whereType<Map<String, dynamic>>()
+              .map(NotificationCategoryPreference.fromJson)
+              .toList(growable: false)
+        : const <NotificationCategoryPreference>[],
+  );
+}
+
+NotificationDeviceToken mapNotificationDeviceToken(Map<String, dynamic> json) {
+  return NotificationDeviceToken(
+    id: (json['id'] ?? '').toString(),
+    platform: (json['platform'] ?? '').toString(),
+    deviceName: (json['device_name'] ?? '').toString(),
+    appVersion: (json['app_version'] ?? '').toString(),
+    locale: (json['locale'] ?? '').toString(),
+    isActive: json['is_active'] != false,
+    lastRegisteredAt: _asDateTime(json['last_registered_at']),
+    lastSeenAt: _asDateTime(json['last_seen_at']),
+  );
+}
+
+NotificationRoute? _mapNotificationRoute(Object? raw) {
+  if (raw is! Map<String, dynamic>) {
+    return null;
+  }
+  final type = _asStringOrNull(raw['type']);
+  if (type == null) {
+    return null;
+  }
+  final payload = raw['payload'];
+  return NotificationRoute(
+    type: NotificationRouteTypeX.tryParse(type) ??
+        NotificationRouteType.engagement,
+    payload: payload is Map<String, dynamic>
+        ? Map<String, dynamic>.from(payload)
+        : const <String, dynamic>{},
   );
 }
 

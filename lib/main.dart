@@ -7,6 +7,7 @@ import 'app/app_instance_guard.dart';
 import 'app/app_session_controller.dart';
 import 'app/app_settings_store.dart';
 import 'features/auth/domain/models/auth_session.dart';
+import 'features/engagement/presentation/services/push_notification_service.dart';
 import 'home_page.dart';
 import 'welcome_screen.dart';
 
@@ -36,6 +37,7 @@ class _StudentAssistantBootstrapAppState
   Future<AppSessionController> _initializeApp() async {
     await AppInstanceGuard.instance.ensureSingleInstance();
     await AppSettingsStore.ensureInitialized();
+    await EngagementFeedCache.ensureInitialized();
     final settingsStore = await AppSettingsStore.open();
     return AppSessionController(settingsStore: settingsStore)..initialize();
   }
@@ -78,6 +80,15 @@ class StudentAssistantApp extends StatefulWidget {
 }
 
 class _StudentAssistantAppState extends State<StudentAssistantApp> {
+  final PushNotificationService _pushNotificationService =
+      PushNotificationService.instance;
+
+  @override
+  void initState() {
+    super.initState();
+    _pushNotificationService.initialize();
+  }
+
   @override
   Widget build(BuildContext context) {
     return AnimatedBuilder(

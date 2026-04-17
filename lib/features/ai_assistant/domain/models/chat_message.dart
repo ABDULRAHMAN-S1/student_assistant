@@ -1,3 +1,4 @@
+import 'assistant_coverage.dart';
 import 'regulation_source.dart';
 
 class ChatMessage {
@@ -13,6 +14,7 @@ class ChatMessage {
     this.isShowingTranslation = false,
     this.isTranslating = false,
     this.routeMode = '',
+    this.coverage,
   });
 
   final String text;
@@ -26,6 +28,8 @@ class ChatMessage {
   final bool isShowingTranslation;
   final bool isTranslating;
   final String routeMode;
+  final AssistantCoverage? coverage;
+  bool get hasCoverageGap => coverage?.hasGap == true;
 
   static const Object _unset = Object();
 
@@ -41,6 +45,7 @@ class ChatMessage {
     bool? isShowingTranslation,
     bool? isTranslating,
     String? routeMode,
+    Object? coverage = _unset,
   }) {
     return ChatMessage(
       text: text ?? this.text,
@@ -56,6 +61,9 @@ class ChatMessage {
       isShowingTranslation: isShowingTranslation ?? this.isShowingTranslation,
       isTranslating: isTranslating ?? this.isTranslating,
       routeMode: routeMode ?? this.routeMode,
+      coverage: identical(coverage, _unset)
+          ? this.coverage
+          : coverage as AssistantCoverage?,
     );
   }
 
@@ -74,6 +82,7 @@ class ChatMessage {
       'isShowingTranslation': isShowingTranslation,
       'isTranslating': isTranslating,
       'routeMode': routeMode,
+      'coverage': coverage?.toJson(),
     };
   }
 
@@ -94,6 +103,7 @@ class ChatMessage {
       isShowingTranslation: map['isShowingTranslation'] == true,
       isTranslating: false,
       routeMode: (map['routeMode'] ?? '').toString(),
+      coverage: AssistantCoverage.fromJsonNullable(map['coverage']),
     );
   }
 }

@@ -61,6 +61,8 @@ class Settings:
     allow_external_translation: bool
     translation_provider: str
     redis_url: str | None
+    notifications_push_enabled: bool
+    fcm_service_account_json: str | None
 
     @property
     def is_production(self) -> bool:
@@ -112,4 +114,6 @@ def get_settings() -> Settings:
         allow_external_translation=_read_bool("ALLOW_EXTERNAL_TRANSLATION", False),
         translation_provider=os.getenv("TRANSLATION_PROVIDER", "disabled").strip().lower() or "disabled",
         redis_url=(os.getenv("REDIS_URL", "").strip() or None),
+        notifications_push_enabled=_read_bool("NOTIFICATIONS_PUSH_ENABLED", True),
+        fcm_service_account_json=(os.getenv("FCM_SERVICE_ACCOUNT_JSON", "").strip() or None),
     )
