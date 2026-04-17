@@ -347,12 +347,40 @@ class AnswerFormatterService:
             return ctx["arabic_output_template"].format(direct_answer=direct_answer, reference=reference).strip()
         return direct_answer
 
+    def build_source_label(self, item: dict[str, Any], context: "FormatterRuntimeContext | dict[str, Any] | None" = None) -> str:
+        """Build a concise, human-readable label for a source item.
+
+        Format: [نوع المصدر] اسم الوثيقة — المادة X / القسم Y
+        This label is shown in the UI next to each retrieved source.
+        """
+        ctx = context or {}
+        metadata = item.get("metadata", {})
+        normalize_fn = ctx.get("normalize_doc_type") if ctx else None
+        doc_type = normalize_fn(metadata.get("doc_type", "regulation")) if callable(normalize_fn) else metadata.get("doc_type", "regulation")
+        document_title = (metadata.get("document_title") or "").strip().rstrip(" :،")
+        article = (metadata.get("article") or "").strip().rstrip(" :،")
+        section = (metadata.get("section") or "").strip().rstrip(" :،")
+
+        type_labels = {"regulation": "لائحة", "policy": "سياسة", "guide": "دليل", "faq": "أسئلة شائعة"}
+        type_label = type_labels.get(doc_type, "مصدر")
+
+        parts = []
+        if document_title:
+            parts.append(document_title)
+        if article and article != document_title:
+            parts.append(article)
+        if section and section not in (document_title, article):
+            parts.append(section)
+
+        core = " — ".join(parts) if parts else ""
+        return f"[{type_label}] {core}".strip() if core else f"[{type_label}]"
+
     def build_sources_payload(
         self,
         question: str,
         source_contexts: list[dict[str, Any]],
         language: str,
-        context: FormatterRuntimeContext | dict[str, Any] | None = None,
+        context: "FormatterRuntimeContext | dict[str, Any] | None" = None,
     ) -> list[dict[str, Any]]:
         ctx = context or {}
         payload: list[dict[str, Any]] = []
@@ -360,6 +388,7 @@ class AnswerFormatterService:
             excerpt = self.build_supporting_excerpt(item, question, language, context=ctx)
             if not excerpt.strip():
                 continue
+            score = float(item.get("score", 0.0))
             payload.append(
                 {
                     "id": item["id"],
@@ -369,9 +398,10 @@ class AnswerFormatterService:
                     "section": item["metadata"].get("section"),
                     "article": item["metadata"].get("article"),
                     "title": item["metadata"].get("title"),
-                    "score": item["score"],
+                    "score": score,
                     "content": excerpt,
                     "content_preview": self.truncate_text(excerpt, 260),
+                    "label": self.build_source_label(item, context=ctx),
                 }
             )
         return payload
@@ -383,11 +413,17 @@ class AnswerFormatterService:
         answer: str,
         sources: list[dict[str, Any]],
         route_mode: str = "",
+        confidence: str = "medium",
+        coverage: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        return {
+        response = {
             "question": question,
             "language": language,
             "answer": answer,
             "sources": sources,
             "route_mode": route_mode,
+            "confidence": confidence,
         }
+        if coverage is not None:
+            response["coverage"] = coverage
+        return response

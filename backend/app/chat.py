@@ -118,6 +118,9 @@ except ImportError:
 FALLBACK_AR = "لم أجد إجابة صريحة في المصادر الجامعية المعتمدة."
 FALLBACK_EN = "I could not find an explicit answer in the available university-approved sources."
 UNCLEAR_AR = "المعلومات المتاحة غير واضحة في هذه النقطة."
+LOW_CONFIDENCE_NOTE_AR = "\n\n⚠️ تنبيه: تعذّر إيجاد نص صريح يجيب على سؤالك بدقة عالية؛ يُنصح بمراجعة الدليل الجامعي أو الجهة المختصة للتحقق."
+CONFIDENCE_HIGH_THRESHOLD = 0.72
+CONFIDENCE_MED_THRESHOLD = 0.50
 UNCLEAR_EN = "The retrieved text is unclear on this point."
 ARABIC_GENERATION_PROMPT = """تعليمات بناء الإجابة:
 - أجب مباشرة وباختصار.
@@ -162,6 +165,23 @@ STRICT_ROUTE_MODES = {
     "penalty",
     "withdrawal",
 }
+COVERAGE_CATEGORY_RULES: dict[str, dict[str, tuple[str, ...] | str]] = {
+    "financial": {
+        "query_terms": ("قرض", "مكاف", "اعان", "منح", "رسوم", "تمويل", "financial", "loan", "scholarship"),
+        "label_ar": "التمويل والمنح",
+        "label_en": "financial support",
+    },
+    "facilities": {
+        "query_terms": ("مرافق", "منشات", "نادي", "رياض", "ملعب", "مختبر", "مكتبه", "facilities", "sports"),
+        "label_ar": "المرافق والخدمات",
+        "label_en": "campus facilities",
+    },
+    "dress": {
+        "query_terms": ("زي", "مظهر", "لبس", "عباي", "dress", "uniform"),
+        "label_ar": "الزي الجامعي",
+        "label_en": "dress code",
+    },
+}
 
 
 logger = logging.getLogger(__name__)
@@ -193,6 +213,73 @@ class RouteDecision:
 
 def mode_requires_strict_context_match(mode: str) -> bool:
     return mode in STRICT_ROUTE_MODES
+
+
+def compute_answer_confidence(contexts: list[dict[str, Any]]) -> tuple[str, float]:
+    """Return a (level, score) tuple describing retrieval confidence.
+
+    Levels:
+      "high"   – top retrieval score >= CONFIDENCE_HIGH_THRESHOLD
+      "medium" – top retrieval score >= CONFIDENCE_MED_THRESHOLD
+      "low"    – top retrieval score below CONFIDENCE_MED_THRESHOLD or no contexts
+    """
+    if not contexts:
+        return "low", 0.0
+    top_score = max(float(c.get("score", 0.0)) for c in contexts)
+    if top_score >= CONFIDENCE_HIGH_THRESHOLD:
+        return "high", top_score
+    if top_score >= CONFIDENCE_MED_THRESHOLD:
+        return "medium", top_score
+    return "low", top_score
+
+
+def detect_coverage_category(question: str) -> str | None:
+    normalized_question = normalize_for_matching(question)
+    for category, rule in COVERAGE_CATEGORY_RULES.items():
+        query_terms = rule.get("query_terms", ())
+        if any(term in normalized_question for term in query_terms):
+            return category
+    return None
+
+
+def context_matches_coverage_category(context: dict[str, Any], category: str) -> bool:
+    record_flags = infer_record_flags(context)
+    return bool(record_flags.get(category, False))
+
+
+def assess_category_source_coverage(question: str, contexts: list[dict[str, Any]]) -> dict[str, Any] | None:
+    category = detect_coverage_category(question)
+    if not category:
+        return None
+
+    category_contexts = [context for context in contexts if context_matches_coverage_category(context, category)]
+    min_score = 0.34 if category == "dress" else CONFIDENCE_MED_THRESHOLD
+    strong_contexts = [
+        context
+        for context in category_contexts
+        if not context_is_weak(context) and float(context.get("score", 0.0)) >= min_score
+    ]
+    return {
+        "category": category,
+        "matched_contexts": len(category_contexts),
+        "strong_contexts": len(strong_contexts),
+        "has_gap": len(strong_contexts) == 0,
+    }
+
+
+def build_coverage_gap_fallback(language: str, category: str) -> str:
+    category_rule = COVERAGE_CATEGORY_RULES.get(category, {})
+    label_ar = str(category_rule.get("label_ar", "هذا الموضوع"))
+    label_en = str(category_rule.get("label_en", "this topic"))
+    if language == "ar":
+        return (
+            f"لا تتوفر في المصادر الجامعية المعتمدة الحالية تغطية كافية لموضوع {label_ar}؛ "
+            "لذلك لا أستطيع تقديم إجابة دقيقة الآن."
+        )
+    return (
+        f"The currently approved university sources do not provide enough coverage for {label_en}, "
+        "so I cannot provide a reliable answer yet."
+    )
 
 
 def context_matches_route_mode(context: dict[str, Any], mode: str) -> bool:
@@ -1234,15 +1321,15 @@ def augment_contexts_for_route(
         penalty_pool = [
             context
             for context in contexts
-            if any(term in search_text(context) for term in ("الغش", "العقوبات", "حرمان", "راسب", "فصل"))
-            and "المادة الخامسة" not in search_text(context)
+            if any(term in context_search_text(context) for term in ("الغش", "العقوبات", "حرمان", "راسب", "فصل"))
+            and "المادة الخامسة" not in context_search_text(context)
         ]
         direct_penalty_contexts = [
             context
             for context in penalty_pool
-            if "الماده الثامنه" in search_text(context)
+            if "الماده الثامنه" in context_search_text(context)
             and any(
-                term in search_text(context)
+                term in context_search_text(context)
                 for term in (
                     "الاختبار الدوري",
                     "الاختبار النصفي",
@@ -1297,7 +1384,7 @@ def augment_contexts_for_route(
                 prefer_article=("الماده الثامنه", "الجهه المسووله"),
             )
             if any(
-                term in search_text(context)
+                term in context_search_text(context)
                 for term in ("الجهه المسووله", "مسووليه متابعه تنفيذ", "تتولي عماده شؤون الطلاب")
             )
         ][:2]
@@ -1318,11 +1405,11 @@ def augment_contexts_for_route(
                 prefer_article=("الماده العاشره",),
             )
             if any(
-                term in search_text(context)
+                term in context_search_text(context)
                 for term in ("ارتداء", "ملابس", "اكسسوارات", "رسومات", "شعارات", "الشورت")
             )
             and not any(
-                term in search_text(context)
+                term in context_search_text(context)
                 for term in ("نموذج", "الحقول", "توقيع", "اقر", "الرقم الجامعي")
             )
         ][:3]
@@ -3242,9 +3329,18 @@ class ChatService:
             fallback_service=self.fallback_service,
         )
 
+        coverage_assessment = assess_category_source_coverage(
+            working_question,
+            filtered_contexts if filtered_contexts else contexts,
+        )
+
         if not filtered_contexts:
-            answer = FALLBACK_AR if language == "ar" else FALLBACK_EN
-            fallback_reason = "no_retrieval_results" if not contexts else "no_mode_aligned_contexts" if mode_requires_strict_context_match(route.mode) else "no_contexts_after_filtering"
+            if coverage_assessment is not None and coverage_assessment["has_gap"]:
+                answer = build_coverage_gap_fallback(language, coverage_assessment["category"])
+                fallback_reason = f"coverage_gap_{coverage_assessment['category']}"
+            else:
+                answer = FALLBACK_AR if language == "ar" else FALLBACK_EN
+                fallback_reason = "no_retrieval_results" if not contexts else "no_mode_aligned_contexts" if mode_requires_strict_context_match(route.mode) else "no_contexts_after_filtering"
             emit_chat_diagnostics(
                 stage="fallback",
                 original_question=original_question,
@@ -3257,7 +3353,39 @@ class ChatService:
                 fallback_reason=fallback_reason,
                 answer=answer,
             )
-            return self.formatter.build_response(original_question, language, answer, [], route_mode=route.mode)
+            return self.formatter.build_response(
+                original_question,
+                language,
+                answer,
+                [],
+                route_mode=route.mode,
+                confidence="low",
+                coverage=coverage_assessment if coverage_assessment is not None else None,
+            )
+
+        if coverage_assessment is not None and coverage_assessment["has_gap"]:
+            answer = build_coverage_gap_fallback(language, coverage_assessment["category"])
+            emit_chat_diagnostics(
+                stage="fallback",
+                original_question=original_question,
+                working_question=working_question,
+                normalized_query=normalized_query,
+                language=language,
+                route=route,
+                retrieved_contexts=contexts,
+                filtered_contexts=filtered_contexts,
+                fallback_reason=f"coverage_gap_{coverage_assessment['category']}",
+                answer=answer,
+            )
+            return self.formatter.build_response(
+                original_question,
+                language,
+                answer,
+                [],
+                route_mode=route.mode,
+                confidence="low",
+                coverage=coverage_assessment,
+            )
 
         direct_arabic_answer, used_contexts, unclear = self.compose_arabic_response_fn(working_question, filtered_contexts)
         answer_state = AnswerComputation(
@@ -3333,6 +3461,17 @@ class ChatService:
             context=formatter_context,
         )
 
+        confidence_level, _ = compute_answer_confidence(filtered_contexts)
+
+        # Append a low-confidence disclaimer when retrieval confidence is low and the
+        # answer is not already a fallback. This reduces silent hallucination risk by
+        # alerting users to verify the information directly with the university.
+        is_fallback_answer = direct_arabic_answer in (FALLBACK_AR, FALLBACK_EN)
+        if not is_fallback_answer and confidence_level == "low" and language == "ar":
+            answer = answer + LOW_CONFIDENCE_NOTE_AR
+        elif not is_fallback_answer and confidence_level == "low" and language != "ar":
+            answer = answer + "\n\n⚠️ Note: No highly relevant source was found for this query. Please verify with the university directly."
+
         emit_chat_diagnostics(
             stage="answer",
             original_question=original_question,
@@ -3347,7 +3486,15 @@ class ChatService:
             answer=answer,
         )
 
-        return self.formatter.build_response(original_question, language, answer, sources, route_mode=route.mode)
+        return self.formatter.build_response(
+            original_question,
+            language,
+            answer,
+            sources,
+            route_mode=route.mode,
+            confidence=confidence_level,
+            coverage=coverage_assessment,
+        )
 
 
 chat_service = ChatService(router=question_router, fallback_service=fallback_service, formatter=formatter)

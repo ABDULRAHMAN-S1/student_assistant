@@ -83,6 +83,57 @@ def init_database() -> None:
                 request_count INTEGER NOT NULL,
                 updated_at TEXT NOT NULL
             );
+
+            CREATE TABLE IF NOT EXISTS student_profiles (
+                user_id TEXT PRIMARY KEY,
+                major TEXT NOT NULL DEFAULT '',
+                academic_level TEXT NOT NULL DEFAULT '',
+                track TEXT NOT NULL DEFAULT '',
+                interests_json TEXT NOT NULL DEFAULT '[]',
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS live_content_items (
+                id TEXT PRIMARY KEY,
+                content_type TEXT NOT NULL,
+                title TEXT NOT NULL,
+                body TEXT NOT NULL,
+                link_url TEXT NOT NULL DEFAULT '',
+                target_major TEXT NOT NULL DEFAULT '',
+                target_level TEXT NOT NULL DEFAULT '',
+                tags_json TEXT NOT NULL DEFAULT '[]',
+                priority INTEGER NOT NULL DEFAULT 0,
+                is_active INTEGER NOT NULL DEFAULT 1,
+                starts_at TEXT,
+                ends_at TEXT,
+                created_by TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY(created_by) REFERENCES users(id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS notifications (
+                id TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL,
+                category TEXT NOT NULL,
+                title TEXT NOT NULL,
+                message TEXT NOT NULL,
+                content_item_id TEXT,
+                priority INTEGER NOT NULL DEFAULT 0,
+                is_read INTEGER NOT NULL DEFAULT 0,
+                metadata_json TEXT NOT NULL DEFAULT '{}',
+                created_at TEXT NOT NULL,
+                read_at TEXT,
+                FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE,
+                FOREIGN KEY(content_item_id) REFERENCES live_content_items(id) ON DELETE SET NULL
+            );
+
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_notifications_user_content_category
+            ON notifications(user_id, content_item_id, category);
+
+            CREATE INDEX IF NOT EXISTS idx_notifications_user_read_created
+            ON notifications(user_id, is_read, created_at DESC);
             """
         )
         user_columns = {
@@ -106,6 +157,13 @@ def init_database() -> None:
         ]:
             if col not in feedback_columns:
                 connection.execute(f"ALTER TABLE feedback_events ADD COLUMN {col} {definition}")
+
+        profile_columns = {
+            row["name"]
+            for row in connection.execute("PRAGMA table_info(student_profiles)").fetchall()
+        }
+        if "track" not in profile_columns:
+            connection.execute("ALTER TABLE student_profiles ADD COLUMN track TEXT NOT NULL DEFAULT ''")
 
 
 def fetch_user_by_email(email: str) -> dict[str, Any] | None:
@@ -241,6 +299,216 @@ def insert_feedback(*, feedback_id: str, user_id: str, question: str, answer: st
                 store_answer,
             ),
         )
+
+
+def fetch_student_profile(user_id: str) -> dict[str, Any]:
+    with connection_scope() as connection:
+        row = connection.execute(
+            """
+            SELECT user_id, major, academic_level, track, interests_json, updated_at
+            FROM student_profiles
+            WHERE user_id = ?
+            LIMIT 1
+            """,
+            (user_id,),
+        ).fetchone()
+    if row is None:
+        return {
+            "user_id": user_id,
+            "major": "",
+            "academic_level": "",
+            "track": "",
+            "interests": [],
+            "updated_at": None,
+        }
+    payload = dict(row)
+    return {
+        "user_id": payload["user_id"],
+        "major": payload["major"] or "",
+        "academic_level": payload["academic_level"] or "",
+        "track": payload["track"] or "",
+        "interests": json.loads(payload["interests_json"] or "[]"),
+        "updated_at": payload["updated_at"],
+    }
+
+
+def upsert_student_profile(*, user_id: str, major: str, academic_level: str, track: str, interests: list[str]) -> dict[str, Any]:
+    now = _timestamp()
+    with connection_scope() as connection:
+        connection.execute(
+            """
+            INSERT INTO student_profiles (user_id, major, academic_level, track, interests_json, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(user_id) DO UPDATE SET
+                major = excluded.major,
+                academic_level = excluded.academic_level,
+                track = excluded.track,
+                interests_json = excluded.interests_json,
+                updated_at = excluded.updated_at
+            """,
+            (user_id, major, academic_level, track, json.dumps(interests, ensure_ascii=False), now),
+        )
+    return fetch_student_profile(user_id)
+
+
+def insert_live_content_item(
+    *,
+    item_id: str,
+    content_type: str,
+    title: str,
+    body: str,
+    link_url: str,
+    target_major: str,
+    target_level: str,
+    tags: list[str],
+    priority: int,
+    starts_at: str | None,
+    ends_at: str | None,
+    created_by: str,
+) -> dict[str, Any]:
+    now = _timestamp()
+    with connection_scope() as connection:
+        connection.execute(
+            """
+            INSERT INTO live_content_items (
+                id, content_type, title, body, link_url, target_major, target_level,
+                tags_json, priority, is_active, starts_at, ends_at, created_by, created_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?)
+            """,
+            (
+                item_id,
+                content_type,
+                title,
+                body,
+                link_url,
+                target_major,
+                target_level,
+                json.dumps(tags, ensure_ascii=False),
+                priority,
+                starts_at,
+                ends_at,
+                created_by,
+                now,
+                now,
+            ),
+        )
+    return fetch_live_content_item(item_id)
+
+
+def fetch_live_content_item(item_id: str) -> dict[str, Any] | None:
+    with connection_scope() as connection:
+        row = connection.execute(
+            "SELECT * FROM live_content_items WHERE id = ? LIMIT 1",
+            (item_id,),
+        ).fetchone()
+    if row is None:
+        return None
+    payload = dict(row)
+    payload["tags"] = json.loads(payload.pop("tags_json") or "[]")
+    return payload
+
+
+def list_active_live_content(*, now_iso: str, limit: int = 100) -> list[dict[str, Any]]:
+    with connection_scope() as connection:
+        rows = connection.execute(
+            """
+            SELECT * FROM live_content_items
+            WHERE is_active = 1
+              AND (starts_at IS NULL OR starts_at <= ?)
+              AND (ends_at IS NULL OR ends_at >= ?)
+            ORDER BY priority DESC, created_at DESC
+            LIMIT ?
+            """,
+            (now_iso, now_iso, limit),
+        ).fetchall()
+    items = []
+    for row in rows:
+        payload = dict(row)
+        payload["tags"] = json.loads(payload.pop("tags_json") or "[]")
+        items.append(payload)
+    return items
+
+
+def insert_notification(
+    *,
+    notification_id: str,
+    user_id: str,
+    category: str,
+    title: str,
+    message: str,
+    content_item_id: str | None,
+    priority: int,
+    metadata: dict[str, Any],
+) -> bool:
+    with connection_scope() as connection:
+        cursor = connection.execute(
+            """
+            INSERT OR IGNORE INTO notifications (
+                id, user_id, category, title, message, content_item_id, priority,
+                is_read, metadata_json, created_at, read_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, NULL)
+            """,
+            (
+                notification_id,
+                user_id,
+                category,
+                title,
+                message,
+                content_item_id,
+                priority,
+                json.dumps(metadata, ensure_ascii=False),
+                _timestamp(),
+            ),
+        )
+    return bool(cursor.rowcount)
+
+
+def list_notifications(*, user_id: str, limit: int = 20, unread_only: bool = False) -> list[dict[str, Any]]:
+    query = """
+        SELECT id, user_id, category, title, message, content_item_id, priority,
+               is_read, metadata_json, created_at, read_at
+        FROM notifications
+        WHERE user_id = ?
+    """
+    params: list[Any] = [user_id]
+    if unread_only:
+        query += " AND is_read = 0"
+    query += " ORDER BY priority DESC, created_at DESC LIMIT ?"
+    params.append(limit)
+
+    with connection_scope() as connection:
+        rows = connection.execute(query, tuple(params)).fetchall()
+    notifications = []
+    for row in rows:
+        payload = dict(row)
+        payload["metadata"] = json.loads(payload.pop("metadata_json") or "{}")
+        payload["is_read"] = bool(payload["is_read"])
+        notifications.append(payload)
+    return notifications
+
+
+def count_unread_notifications(user_id: str) -> int:
+    with connection_scope() as connection:
+        row = connection.execute(
+            "SELECT COUNT(*) AS total FROM notifications WHERE user_id = ? AND is_read = 0",
+            (user_id,),
+        ).fetchone()
+    return int(row["total"]) if row else 0
+
+
+def mark_notification_as_read(*, user_id: str, notification_id: str) -> bool:
+    with connection_scope() as connection:
+        cursor = connection.execute(
+            """
+            UPDATE notifications
+            SET is_read = 1, read_at = ?
+            WHERE id = ? AND user_id = ? AND is_read = 0
+            """,
+            (_timestamp(), notification_id, user_id),
+        )
+    return bool(cursor.rowcount)
 
 
 def atomic_rate_limit_check(*, bucket_key: str, window_started_at: int, limit: int) -> bool:

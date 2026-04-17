@@ -32,7 +32,15 @@ COLLECTION_NAME = os.getenv("VECTOR_COLLECTION_NAME", "university_regulations")
 EMBEDDING_MODEL_NAME = os.getenv(
     "EMBEDDING_MODEL",
     "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
+    # Recommended upgrade for better Arabic retrieval (requires rebuild):
+    # EMBEDDING_MODEL=intfloat/multilingual-e5-large python -m app.embed_store --rebuild
 )
+RERANKING_MODEL_NAME = os.getenv(
+    "RERANKING_MODEL",
+    "cross-encoder/mmarco-mMiniLMv2-L12-H384-v1",
+)
+ENABLE_RERANKING = os.getenv("ENABLE_RERANKING", "false").lower() in ("1", "true", "yes")
+RERANKING_POOL_SIZE = max(4, int(os.getenv("RERANKING_POOL_SIZE", "20")))
 NO_OP_TELEMETRY_IMPL = "app.chroma_telemetry.NoOpTelemetryClient"
 ARABIC_PATTERN = re.compile(r"[\u0600-\u06FF]")
 ARABIC_DIACRITICS_PATTERN = re.compile(r"[\u0610-\u061A\u064B-\u065F\u0670\u06D6-\u06ED]")
@@ -457,7 +465,11 @@ def normalize_query(query: str) -> str:
     if any(term in normalized for term in ("تصوير المحاضرات", "تسجيل المحاضرات", "تصوير محاضره", "تصوير المحاضره")):
         expanded_parts.append("تصوير المحاضرات تسجيل المحاضرات قبل اخذ موافقه المحاضر الخطيه قواعد السلوك والانضباط الطلابي")
 
-    return " ".join(part for part in expanded_parts if part).strip()
+    result = " ".join(part for part in expanded_parts if part).strip()
+    # E5-family models (e.g. intfloat/multilingual-e5-large) require "query: " prefix
+    if "e5" in EMBEDDING_MODEL_NAME.lower():
+        return f"query: {result}"
+    return result
 
 
 def normalize_for_matching(text: str) -> str:
@@ -837,6 +849,16 @@ def infer_query_flags(query_profile: dict[str, Any]) -> dict[str, bool]:
         or any(phrase in normalized_query for phrase in ("السكن الطلابي", "السكن الجامعي", "الاسكان الطلابي")),
         "dress": bool({"زي", "مظهر", "عباي", "لبس"} & stems)
         or any(phrase in normalized_query for phrase in ("الزي الجامعي", "المظهر العام")),
+        "financial": bool({"قرض", "قروض", "مكاف", "اعان", "منح", "رسوم", "سداد", "تمويل"} & stems)
+        or any(
+            phrase in normalized_query
+            for phrase in ("قرض طلابي", "منحه", "مكافاه", "اعانه", "رسوم دراسيه", "دعم مالي")
+        ),
+        "facilities": bool({"مرافق", "منشات", "نادي", "رياض", "ملعب", "مختبر", "مكتبه", "قاع"} & stems)
+        or any(
+            phrase in normalized_query
+            for phrase in ("مرافق الجامعه", "ملاعب", "نادي رياضي", "المكتبه", "الخدمات الطلابيه")
+        ),
         "attendance": bool(ATTENDANCE_QUERY_STEMS & stems)
         or any(
             phrase in normalized_query
@@ -977,6 +999,14 @@ def infer_record_flags(record: dict[str, Any]) -> dict[str, bool]:
         ) and has_appeal_word,
         "housing": any(term in text for term in ("اسكان", "سكن")),
         "dress": any(term in text for term in ("الزي", "مظهر")),
+        "financial": any(
+            term in text
+            for term in ("قرض", "مكافاه", "مكافاه", "اعانه", "منحه", "رسوم", "تمويل", "دعم مالي")
+        ),
+        "facilities": any(
+            term in text
+            for term in ("مرافق", "منشاه", "منشات", "نادي", "رياضي", "ملعب", "مكتبه", "مختبر", "قاعات")
+        ),
         "attendance": any(term in text for term in ATTENDANCE_SIGNAL_TERMS),
         "withdrawal": "انسحاب" in text,
         "missed_final": any(term in text for term in ("غايب", "يغيب", "صفر", "صفرا", "اختبار بديل", "الماده الحاديه والثلاثون", "الماده الثانيه والثلاثون", "المادة الحادية والثلاثون", "المادة الثانية والثلاثون")),
@@ -1134,6 +1164,51 @@ def get_embedding_model() -> Any:
 
 
 @lru_cache(maxsize=1)
+def get_reranking_model() -> Any:
+    """Load a cross-encoder reranking model. Returns None if unavailable or disabled."""
+    if not ENABLE_RERANKING:
+        return None
+    os.environ.setdefault("HF_HUB_DISABLE_PROGRESS_BARS", "1")
+    os.environ.setdefault("TRANSFORMERS_VERBOSITY", "error")
+    try:
+        from sentence_transformers.cross_encoder import CrossEncoder  # noqa: PLC0415
+
+        if os.name == "nt":
+            with open(os.devnull, "w", encoding="utf-8") as devnull:
+                with contextlib.redirect_stdout(devnull), contextlib.redirect_stderr(devnull):
+                    return CrossEncoder(RERANKING_MODEL_NAME)
+        return CrossEncoder(RERANKING_MODEL_NAME)
+    except Exception as exc:
+        logger.warning("Cross-encoder reranking model unavailable: %s", exc)
+        return None
+
+
+def rerank_candidates(query: str, candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Rerank candidates using a cross-encoder for higher relevance precision.
+
+    Falls back to original order if the model is unavailable or reranking fails.
+    The cross-encoder evaluates (query, passage) pairs jointly, giving a more
+    accurate relevance signal than bi-encoder cosine similarity alone.
+    """
+    if not candidates:
+        return candidates
+    model = get_reranking_model()
+    if model is None:
+        return candidates
+    try:
+        pairs = [(query, c.get("content", "")) for c in candidates]
+        scores = model.predict(pairs)
+        reranked = [dict(c) for c in candidates]
+        for item, score in zip(reranked, scores):
+            item["reranker_score"] = round(float(score), 4)
+        reranked.sort(key=lambda x: x.get("reranker_score", 0.0), reverse=True)
+        return reranked
+    except Exception as exc:
+        logger.warning("Cross-encoder reranking failed, keeping original order: %s", exc)
+        return candidates
+
+
+@lru_cache(maxsize=1)
 def get_chroma_client() -> chromadb.PersistentClient:
     VECTORDB_DIR.mkdir(parents=True, exist_ok=True)
     return chromadb.PersistentClient(
@@ -1151,6 +1226,22 @@ def get_collection() -> Any:
     cached_collection = _collection_cache.get("collection")
     if _collection_cache.get("token") == token and cached_collection is not None:
         return cached_collection
+
+    # Guard against silent degradation: if the index was built with a different
+    # embedding model, retrieved vectors would be in the wrong space and results
+    # would be meaningless. Raise early so the caller falls back to lexical search.
+    if BUILD_INFO_PATH.exists():
+        try:
+            build_info = json.loads(BUILD_INFO_PATH.read_text(encoding="utf-8"))
+            indexed_model = build_info.get("embedding_model", "")
+            if indexed_model and indexed_model != EMBEDDING_MODEL_NAME:
+                raise RuntimeError(
+                    f"Embedding model mismatch: index was built with '{indexed_model}' "
+                    f"but EMBEDDING_MODEL='{EMBEDDING_MODEL_NAME}'. "
+                    "Run `python -m app.embed_store --rebuild` to rebuild the index."
+                )
+        except (OSError, json.JSONDecodeError):
+            pass
 
     client = get_chroma_client()
     try:
@@ -1647,6 +1738,20 @@ def search(query: str, top_k: int = 4) -> list[dict[str, Any]]:
                     continue
         if record_flags["dress"] and not query_flags["dress"] and lexical_score < 0.55:
             score -= 0.16
+        if record_flags["financial"] and not query_flags["financial"] and lexical_score < 0.55:
+            score -= 0.16
+        if query_flags["financial"]:
+            if record_flags["financial"]:
+                score += 0.08
+            elif lexical_score < 0.58 and semantic_score < 0.8:
+                score -= 0.22
+        if record_flags["facilities"] and not query_flags["facilities"] and lexical_score < 0.55:
+            score -= 0.14
+        if query_flags["facilities"]:
+            if record_flags["facilities"]:
+                score += 0.08
+            elif lexical_score < 0.58 and semantic_score < 0.8:
+                score -= 0.2
         if query_flags["attendance"] and not query_flags["missed_final"]:
             query_attendance_stems = attendance_query_stems(query_profile)
             if attendance_matches > 0:
@@ -1773,6 +1878,13 @@ def search(query: str, top_k: int = 4) -> list[dict[str, Any]]:
                     final_ranked = [faq_candidate] + [
                         item for item in final_ranked if item["id"] != faq_candidate["id"]
                     ]
+
+    # Cross-encoder reranking: rescore the top candidates with a (query, passage)
+    # model for higher relevance precision. Only activates when ENABLE_RERANKING=true.
+    if ENABLE_RERANKING and len(final_ranked) > 1:
+        rerank_pool = final_ranked[:RERANKING_POOL_SIZE]
+        reranked_pool = rerank_candidates(raw_query, rerank_pool)
+        final_ranked = reranked_pool + final_ranked[RERANKING_POOL_SIZE:]
 
     cleaned_ranked = []
     for item in final_ranked[:top_k]:

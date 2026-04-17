@@ -227,6 +227,9 @@ def build_vector_store(rebuild: bool = False, batch_size: int = 32) -> dict[str,
 
     for batch in batched(chunks_to_embed, batch_size=max(1, batch_size)):
         documents = [item["content"] for item in batch]
+        # E5-family models require "passage: " prefix for documents at index time
+        if "e5" in EMBEDDING_MODEL_NAME.lower():
+            documents = [f"passage: {doc}" for doc in documents]
         embeddings = model.encode(
             documents,
             batch_size=max(1, min(batch_size, len(batch))),

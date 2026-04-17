@@ -1,12 +1,12 @@
 {
   "collection_name": "university_regulations",
-  "embedding_model": "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
+  "embedding_model": "intfloat/multilingual-e5-large",
   "chunk_count": 576,
   "processed_sync_hash": "00321d1a5a035573e34a1b5d92403a80b798eb0623ed58e8e73d5e9aa4302b85",
-  "new_chunks_added": 0,
+  "new_chunks_added": 576,
   "updated_chunks": 0,
   "deleted_chunks": 0,
-  "rebuild": false,
+  "rebuild": true,
   "vector_count": 576,
   "vectordb_path": "data\\vectordb"
 }

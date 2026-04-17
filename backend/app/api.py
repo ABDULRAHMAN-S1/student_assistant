@@ -13,24 +13,62 @@ try:
     from app.chat import answer_question
     from app.config import get_settings
     from app.database import init_database, insert_feedback
+    from app.engagement_service import (
+        create_live_content,
+        generate_notifications_for_user,
+        get_personalized_feed,
+        get_student_profile,
+        mark_notification_as_read,
+        update_student_profile,
+    )
     from app.logging_utils import configure_logging
     from app.rate_limit import RateLimiter
     from app.retrieve import (
         search,
     )
-    from app.schemas import ChatRequest, FeedbackRequest, LoginRequest, RefreshRequest, RegisterRequest, SearchRequest, TranslateRequest, UpdateUserRoleRequest
+    from app.schemas import (
+        ChatRequest,
+        FeedbackRequest,
+        LiveContentCreateRequest,
+        LoginRequest,
+        RefreshRequest,
+        RegisterRequest,
+        SearchRequest,
+        StudentProfileUpdateRequest,
+        TranslateRequest,
+        UpdateUserRoleRequest,
+    )
     from app.translation_service import TranslationUnavailable, translate_text
 except ImportError:
     from auth_service import AuthenticatedUser, authenticate_user, list_users, refresh_session, register_user, require_authenticated_user, require_role, update_user_role  # type: ignore
     from chat import answer_question  # type: ignore
     from config import get_settings  # type: ignore
     from database import init_database, insert_feedback  # type: ignore
+    from engagement_service import (  # type: ignore
+        create_live_content,
+        generate_notifications_for_user,
+        get_personalized_feed,
+        get_student_profile,
+        mark_notification_as_read,
+        update_student_profile,
+    )
     from logging_utils import configure_logging  # type: ignore
     from rate_limit import RateLimiter  # type: ignore
     from retrieve import (  # type: ignore
         search,
     )
-    from schemas import ChatRequest, FeedbackRequest, LoginRequest, RefreshRequest, RegisterRequest, SearchRequest, TranslateRequest, UpdateUserRoleRequest  # type: ignore
+    from schemas import (  # type: ignore
+        ChatRequest,
+        FeedbackRequest,
+        LiveContentCreateRequest,
+        LoginRequest,
+        RefreshRequest,
+        RegisterRequest,
+        SearchRequest,
+        StudentProfileUpdateRequest,
+        TranslateRequest,
+        UpdateUserRoleRequest,
+    )
     from translation_service import TranslationUnavailable, translate_text  # type: ignore
 
 
@@ -51,6 +89,10 @@ RATE_LIMIT_RULES = {
     "/public/health": (60, 60),
     "/health": (20, 60),
     "/users": (20, 60),
+    "/engagement/profile": (30, 60),
+    "/engagement/feed": (20, 60),
+    "/engagement/content": (20, 60),
+    "/engagement/notifications/generate": (10, 60),
 }
 
 
@@ -229,6 +271,111 @@ def me(
 ) -> dict[str, object]:
     enforce_rate_limit(http_request, user=current_user)
     return {"user": serialize_current_user(current_user)}
+
+
+@app.get("/engagement/profile")
+def get_profile(
+    http_request: Request,
+    current_user: AuthenticatedUser = Depends(require_authenticated_user),
+) -> dict[str, object]:
+    enforce_rate_limit(http_request, user=current_user)
+    return {
+        "profile": get_student_profile(current_user.user_id),
+    }
+
+
+@app.put("/engagement/profile")
+def put_profile(
+    http_request: Request,
+    request: StudentProfileUpdateRequest,
+    current_user: AuthenticatedUser = Depends(require_authenticated_user),
+) -> dict[str, object]:
+    enforce_rate_limit(http_request, user=current_user)
+    profile = update_student_profile(
+        user_id=current_user.user_id,
+        major=request.major,
+        academic_level=request.academic_level,
+        track=request.track,
+        interests=request.interests,
+    )
+    return {"profile": profile}
+
+
+@app.post("/engagement/content")
+def post_live_content(
+    http_request: Request,
+    request: LiveContentCreateRequest,
+    current_user: AuthenticatedUser = Depends(require_role(["admin"])),
+) -> dict[str, object]:
+    enforce_rate_limit(http_request, user=current_user)
+    item = create_live_content(
+        created_by=current_user.user_id,
+        content_type=request.content_type,
+        title=request.title,
+        body=request.body,
+        link_url=request.link_url,
+        target_major=request.target_major,
+        target_level=request.target_level,
+        tags=request.tags,
+        priority=request.priority,
+        starts_at=request.starts_at,
+        ends_at=request.ends_at,
+    )
+    return {"item": item}
+
+
+@app.get("/engagement/feed")
+def get_feed(
+    http_request: Request,
+    include_read: bool = False,
+    limit: int = 20,
+    current_user: AuthenticatedUser = Depends(require_authenticated_user),
+) -> dict[str, object]:
+    enforce_rate_limit(http_request, user=current_user)
+    bounded_limit = max(1, min(limit, 50))
+    return get_personalized_feed(
+        user_id=current_user.user_id,
+        include_read=include_read,
+        limit=bounded_limit,
+    )
+
+
+@app.post("/engagement/notifications/generate")
+def post_generate_notifications(
+    http_request: Request,
+    limit: int = 20,
+    current_user: AuthenticatedUser = Depends(require_authenticated_user),
+) -> dict[str, object]:
+    enforce_rate_limit(http_request, user=current_user)
+    bounded_limit = max(1, min(limit, 100))
+    generated_count = generate_notifications_for_user(
+        user_id=current_user.user_id,
+        limit=bounded_limit,
+    )
+    return {
+        "status": "ok",
+        "generated_count": generated_count,
+    }
+
+
+@app.patch("/engagement/notifications/{notification_id}/read")
+def patch_notification_read(
+    notification_id: str,
+    http_request: Request,
+    current_user: AuthenticatedUser = Depends(require_authenticated_user),
+) -> dict[str, object]:
+    enforce_rate_limit(http_request, user=current_user)
+    changed = mark_notification_as_read(
+        user_id=current_user.user_id,
+        notification_id=notification_id,
+    )
+    if not changed:
+        raise_api_error(
+            status_code=404,
+            code="notification_not_found",
+            message="Notification was not found.",
+        )
+    return {"status": "ok"}
 
 
 @app.get("/admin")

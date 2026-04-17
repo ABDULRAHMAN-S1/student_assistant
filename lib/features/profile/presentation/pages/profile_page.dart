@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../../../engagement/data/remote/engagement_api_client.dart';
+import '../../../engagement/data/repositories/engagement_repository.dart';
 import '../../data/demo/demo_profile_repository.dart';
 import '../../data/local/profile_store.dart';
 import '../../domain/models/academic_context.dart';
@@ -20,8 +22,11 @@ class _ProfilePageState extends State<ProfilePage> {
   final _emailController = TextEditingController();
   final _phoneController = TextEditingController();
   final _specializationController = TextEditingController();
+  final _trackController = TextEditingController();
   final _currentSemesterController = TextEditingController();
   final _courseIdController = TextEditingController();
+  final EngagementRepository _engagementRepository =
+      const EngagementApiClient();
 
   bool _isLoading = true;
   bool _isSaving = false;
@@ -104,6 +109,7 @@ class _ProfilePageState extends State<ProfilePage> {
     _emailController.dispose();
     _phoneController.dispose();
     _specializationController.dispose();
+    _trackController.dispose();
     _currentSemesterController.dispose();
     _courseIdController.dispose();
     super.dispose();
@@ -122,6 +128,7 @@ class _ProfilePageState extends State<ProfilePage> {
     _phoneController.text = profile?.phoneNumber ?? '';
     _specializationController.text =
         profile?.academicContext.specialization ?? '';
+    _trackController.text = '';
     _currentSemesterController.text =
         profile?.academicContext.currentSemester ?? '';
     _selectedAcademicLevel = _normalizeAcademicLevel(
@@ -141,6 +148,25 @@ class _ProfilePageState extends State<ProfilePage> {
             .map(_normalizeCourseId)
             .where((value) => value.isNotEmpty),
       );
+
+    try {
+      final remoteProfile = await _engagementRepository.getProfile();
+      if (!mounted) return;
+      _specializationController.text = remoteProfile.major;
+      _trackController.text = remoteProfile.track;
+      _selectedAcademicLevel = _normalizeAcademicLevel(
+        remoteProfile.academicLevel,
+      );
+      _selectedInterests
+        ..clear()
+        ..addAll(
+          remoteProfile.interests
+              .map(_normalizeInterest)
+              .where((value) => value.isNotEmpty),
+        );
+    } catch (_) {
+      // Keep local profile behavior even when backend profile sync fails.
+    }
 
     setState(() {
       _isLoading = false;
@@ -407,6 +433,17 @@ class _ProfilePageState extends State<ProfilePage> {
       final repository = DemoProfileRepository(profileStore: profileStore);
       final updatedProfile = _buildUpdatedProfile();
       await repository.saveProfile(updatedProfile);
+      var remoteSyncFailed = false;
+      try {
+        await _engagementRepository.updateProfile(
+          major: _specializationController.text.trim(),
+          academicLevel: (_selectedAcademicLevel ?? '').trim(),
+          track: _trackController.text.trim(),
+          interests: _selectedInterests.toList(growable: false),
+        );
+      } on EngagementApiException {
+        remoteSyncFailed = true;
+      }
 
       if (!mounted) return;
       setState(() {
@@ -417,7 +454,15 @@ class _ProfilePageState extends State<ProfilePage> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            _t('تم حفظ الملف الأكاديمي محليًا.', 'Profile saved locally.'),
+            remoteSyncFailed
+                ? _t(
+                    'تم حفظ الملف محليًا، وتعذر مزامنته مع الخادم.',
+                    'Profile saved locally, but server sync failed.',
+                  )
+                : _t(
+                    'تم حفظ الملف الأكاديمي ومزامنته.',
+                    'Profile saved and synced successfully.',
+                  ),
           ),
         ),
       );
@@ -605,6 +650,15 @@ class _ProfilePageState extends State<ProfilePage> {
                         hint: _t(
                           'مثل: علوم الحاسب',
                           'Example: Computer Science',
+                        ),
+                      ),
+                      const SizedBox(height: 14),
+                      _buildTextField(
+                        controller: _trackController,
+                        label: _t('المسار', 'Track'),
+                        hint: _t(
+                          'مثل: مسار البرمجيات',
+                          'Example: Software Track',
                         ),
                       ),
                       const SizedBox(height: 14),

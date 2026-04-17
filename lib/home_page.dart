@@ -11,6 +11,10 @@ import 'features/courses/data/demo/demo_course_repository.dart';
 import 'features/courses/data/repositories/course_repository.dart';
 import 'features/events/data/demo/demo_event_repository.dart';
 import 'features/events/data/repositories/event_repository.dart';
+import 'features/engagement/data/remote/engagement_api_client.dart';
+import 'features/engagement/presentation/controllers/engagement_feed_controller.dart';
+import 'features/engagement/presentation/widgets/engagement_feed_section.dart';
+import 'features/engagement/domain/models/suggestion_item.dart';
 import 'features/profile/data/demo/demo_profile_repository.dart';
 import 'features/profile/data/local/profile_store.dart';
 import 'features/profile/presentation/pages/profile_page.dart';
@@ -72,6 +76,7 @@ class _HomePageState extends State<HomePage> {
   int? _pendingProtectedPageIndex;
   bool _isHandlingSessionExpiry = false;
   late Future<List<RecommendationItem>> _recommendationsFuture;
+  EngagementFeedController? _engagementController;
 
   bool get _isAdmin => widget.authSession?.isAdmin == true;
 
@@ -80,6 +85,13 @@ class _HomePageState extends State<HomePage> {
     super.initState();
     _isArabic = widget.isArabic;
     _recommendationsFuture = _loadRecommendations();
+    _setupEngagementController();
+  }
+
+  @override
+  void dispose() {
+    _engagementController?.dispose();
+    super.dispose();
   }
 
   @override
@@ -95,6 +107,28 @@ class _HomePageState extends State<HomePage> {
         currentIndex = 0;
       }
     }
+    if (oldWidget.isGuest != widget.isGuest ||
+        oldWidget.authSession?.userId != widget.authSession?.userId) {
+      _setupEngagementController();
+    }
+  }
+
+  void _setupEngagementController() {
+    _engagementController?.dispose();
+    if (widget.isGuest || widget.authSession == null) {
+      _engagementController = null;
+      return;
+    }
+    final controller = EngagementFeedController(
+      repository: const EngagementApiClient(),
+    );
+    _engagementController = controller;
+    controller.addListener(() {
+      if (mounted) {
+        setState(() {});
+      }
+    });
+    controller.loadInitial();
   }
 
   Future<List<RecommendationItem>> _loadRecommendations() async {
@@ -140,6 +174,7 @@ class _HomePageState extends State<HomePage> {
                 currentIndex = resolvedTargetIndex;
               }
             });
+            _setupEngagementController();
             CustomToast.show(
               context: context,
               message: _isArabic
@@ -226,6 +261,115 @@ class _HomePageState extends State<HomePage> {
       _recommendationsFuture = _loadRecommendations();
       _profileRefreshSeed++;
     });
+    await _engagementController?.refresh();
+  }
+
+  Future<void> _markEngagementNotificationAsRead(String notificationId) async {
+    final controller = _engagementController;
+    if (controller == null) {
+      return;
+    }
+    try {
+      await controller.markAsRead(notificationId);
+      if (!mounted) {
+        return;
+      }
+      CustomToast.show(
+        context: context,
+        message: _isArabic
+            ? 'تم تعليم التنبيه كمقروء'
+            : 'Notification marked as read',
+        icon: Icons.done,
+        color: Colors.green,
+      );
+    } catch (_) {
+      if (!mounted) {
+        return;
+      }
+      CustomToast.show(
+        context: context,
+        message: _isArabic
+            ? 'تعذر تحديث حالة التنبيه'
+            : 'Could not update notification',
+        icon: Icons.error_outline,
+        color: AppColors.destructive,
+      );
+    }
+  }
+
+  void _openSuggestionDetails(SuggestionItem item) {
+    final details = item.linkUrl?.trim().isNotEmpty == true
+        ? item.linkUrl!.trim()
+        : item.body;
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (sheetContext) {
+        return SafeArea(
+          top: false,
+          child: Container(
+            decoration: const BoxDecoration(
+              color: AppColors.card,
+              borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+            ),
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(20, 18, 20, 22),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    item.title,
+                    style: const TextStyle(
+                      fontSize: 17,
+                      fontWeight: FontWeight.w900,
+                      color: AppColors.primaryText,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    item.body,
+                    style: const TextStyle(
+                      fontSize: 13.5,
+                      color: AppColors.mutedText,
+                      height: 1.45,
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: AppColors.background,
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: AppColors.border),
+                    ),
+                    child: Text(
+                      details,
+                      style: const TextStyle(
+                        fontSize: 12.5,
+                        color: AppColors.primaryText,
+                        height: 1.4,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: TextButton.icon(
+                      onPressed: () => Navigator.of(sheetContext).pop(),
+                      icon: const Icon(Icons.close),
+                      label: Text(_isArabic ? 'إغلاق' : 'Close'),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
   }
 
   void _navigateTo(int index, String featureName) {
@@ -282,6 +426,16 @@ class _HomePageState extends State<HomePage> {
         TaibahWelcomeCard(isArabic: _isArabic),
         const SizedBox(height: 14),
         _buildRecommendationsSection(),
+        if (!widget.isGuest && _engagementController != null) ...[
+          const SizedBox(height: 12),
+          EngagementFeedSection(
+            controller: _engagementController!,
+            isArabic: _isArabic,
+            onMarkAsRead: _markEngagementNotificationAsRead,
+            onOpenSuggestion: _openSuggestionDetails,
+            onOpenProfile: _openProfilePage,
+          ),
+        ],
         const SizedBox(height: 12),
 
         FeatureCard(
@@ -992,7 +1146,7 @@ class _HomePageState extends State<HomePage> {
       appBar: _TopBar(
         isArabic: _isArabic,
         isGuest: widget.isGuest,
-        notifCount: 3,
+        notifCount: _engagementController?.unreadCount ?? 0,
         accentColor: accent,
         onLogin: () {
           if (widget.isGuest) {
