@@ -16,6 +16,7 @@ class AppSettingsStore {
   static const String hasSeenWelcomeKey = 'hasSeenWelcome';
   static const String isLoggedInKey = 'isLoggedIn';
   static const String authSessionKey = 'authSession';
+  static const String notificationDeviceTokenIdKey = 'notificationDeviceTokenId';
 
   final Box _box;
 
@@ -96,6 +97,12 @@ class AppSettingsStore {
     return session.isAuthenticated ? session : null;
   }
 
+  String? readNotificationDeviceTokenId() {
+    final raw = _box.get(notificationDeviceTokenIdKey);
+    final value = raw?.toString().trim() ?? '';
+    return value.isEmpty ? null : value;
+  }
+
   Future<void> writeLanguageCode(String languageCode) {
     return _box.put(languageKey, languageCode);
   }
@@ -111,6 +118,15 @@ class AppSettingsStore {
   Future<void> writeAuthSession(AuthSession session) async {
     await _box.put(authSessionKey, session.toMap());
     await writeIsLoggedIn(true);
+  }
+
+  Future<void> writeNotificationDeviceTokenId(String? value) async {
+    final cleaned = value?.trim() ?? '';
+    if (cleaned.isEmpty) {
+      await _box.delete(notificationDeviceTokenIdKey);
+      return;
+    }
+    await _box.put(notificationDeviceTokenIdKey, cleaned);
   }
 
   Future<void> clearAuthSession() async {

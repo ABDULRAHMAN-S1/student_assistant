@@ -9,6 +9,7 @@ import '../../../../app/app_settings_store.dart';
 import '../../../auth/data/remote/auth_api_client.dart';
 import '../../../auth/domain/models/auth_session.dart';
 import '../../domain/models/engagement_feed.dart';
+import '../../domain/models/notification_category_preference_update.dart';
 import '../../domain/models/notification_device_token.dart';
 import '../../domain/models/notification_preferences.dart';
 import '../../domain/models/notification_read_result.dart';
@@ -96,7 +97,7 @@ class EngagementApiClient {
         kind: EngagementApiErrorKind.invalidResponse,
       );
     }
-    return mapNotificationReadResponse(payload);
+    return mapNotificationReadResult(payload);
   }
 
   Future<StudentEngagementProfile> getProfile() async {
@@ -175,14 +176,19 @@ class EngagementApiClient {
     bool? enableInApp,
     List<NotificationCategoryPreferenceUpdate> categories = const [],
   }) async {
+    final body = <String, Object?>{
+      'categories': categories.map((item) => item.toJson()).toList(),
+    };
+    if (enablePush != null) {
+      body['enable_push'] = enablePush;
+    }
+    if (enableInApp != null) {
+      body['enable_in_app'] = enableInApp;
+    }
     final payload = await _authorizedRequest(
       'PUT',
       '/engagement/notifications/preferences',
-      body: {
-        if (enablePush != null) 'enable_push': enablePush,
-        if (enableInApp != null) 'enable_in_app': enableInApp,
-        'categories': categories.map((item) => item.toJson()).toList(),
-      },
+      body: body,
     );
     if (payload is! Map<String, dynamic>) {
       throw const EngagementApiException(

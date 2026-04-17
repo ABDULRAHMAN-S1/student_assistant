@@ -50,7 +50,7 @@ class NotificationNavigationService {
     if (type == null || type.isEmpty || context == null) {
       return;
     }
-    final routeType = NotificationRouteTypeX.tryParse(type);
+    final routeType = NotificationRouteTypeX.fromString(type);
     if (routeType == null) {
       return;
     }
@@ -109,7 +109,7 @@ class NotificationNavigationService {
           MaterialPageRoute(
             builder: (_) => RegulationSearchPage(
               isArabic: isArabic,
-              initialQuery: (route.payload['query'] ?? '').toString(),
+              onSessionExpired: onSessionExpired,
             ),
           ),
         );

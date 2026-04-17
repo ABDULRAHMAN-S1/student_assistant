@@ -7,6 +7,7 @@ import 'app/app_instance_guard.dart';
 import 'app/app_session_controller.dart';
 import 'app/app_settings_store.dart';
 import 'features/auth/domain/models/auth_session.dart';
+import 'features/engagement/data/local/engagement_feed_cache.dart';
 import 'features/engagement/presentation/services/push_notification_service.dart';
 import 'home_page.dart';
 import 'welcome_screen.dart';

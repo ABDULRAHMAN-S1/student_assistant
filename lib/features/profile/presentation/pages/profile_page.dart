@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../../engagement/data/remote/engagement_api_client.dart';
 import '../../../engagement/data/repositories/engagement_repository.dart';
 import '../../../engagement/data/repositories/engagement_repository_impl.dart';
+import '../../../engagement/domain/models/notification_category_preference_update.dart';
 import '../../../engagement/domain/models/notification_preferences.dart';
 import '../../data/demo/demo_profile_repository.dart';
 import '../../data/local/profile_store.dart';
@@ -38,7 +39,7 @@ class _ProfilePageState extends State<ProfilePage> {
   final Set<String> _selectedInterests = <String>{};
   final List<String> _enrolledCourseIds = <String>[];
   NotificationPreferences _notificationPreferences =
-      const NotificationPreferences();
+      NotificationPreferences.empty;
 
   static const Color _backgroundColor = Color(0xFFFBF4FC);
   static const Color _cardColor = Colors.white;

@@ -265,10 +265,6 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
-  void _toast(String msg) {
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
-  }
-
   Future<void> _openProfilePage() async {
     final updated = await Navigator.of(context).push<bool>(
       MaterialPageRoute(builder: (_) => ProfilePage(isArabic: _isArabic)),
@@ -358,7 +354,7 @@ class _HomePageState extends State<HomePage> {
 
   Future<void> _openNotification(NotificationItem item) async {
     await NotificationNavigationService.instance.openNotification(
-      context,
+      context: context,
       item: item,
       isArabic: _isArabic,
       onSessionExpired: _handleSessionExpired,

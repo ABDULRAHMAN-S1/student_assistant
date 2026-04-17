@@ -9,6 +9,7 @@ class EngagementFeed {
     this.page = const EngagementFeedPage(),
     this.unreadCount = 0,
     this.generatedCount = 0,
+    this.cachedAt,
   });
 
   final List<NotificationItem> notifications;

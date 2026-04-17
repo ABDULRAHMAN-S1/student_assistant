@@ -22,6 +22,15 @@ class EngagementFeedCache {
     return Hive.box(boxName);
   }
 
+  static Future<EngagementFeedCache> open() async {
+    await _openBox();
+    return const EngagementFeedCache();
+  }
+
+  static Future<void> ensureInitialized() async {
+    await _openBox();
+  }
+
   static Future<void> _openEncryptedBox(String name) async {
     final encryptionKey = await LocalEncryptionKeyProvider.instance.getKey();
     try {

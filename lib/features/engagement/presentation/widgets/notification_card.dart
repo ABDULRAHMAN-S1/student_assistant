@@ -27,11 +27,11 @@ class NotificationCard extends StatelessWidget {
       isArabic: isArabic,
     );
     final routeLabel = item.metadata?.route?.displayLabel(isArabic: isArabic);
-    final relativeTime = formatNotificationRelativeTime(
+    final relativeTime = formatRelativeNotificationTime(
       item.createdAt,
       isArabic: isArabic,
     );
-    final exactTime = formatNotificationAbsoluteTime(
+    final exactTime = formatExactNotificationTime(
       item.createdAt,
       isArabic: isArabic,
     );
