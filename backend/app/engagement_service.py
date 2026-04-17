@@ -340,6 +340,7 @@ def _deliver_push_if_needed(
             "category": category,
             "route": json.dumps(route, ensure_ascii=False),
             "route_type": str(route.get("type") or "engagement"),
+            "route_payload": json.dumps(route.get("payload") or {}, ensure_ascii=False),
         },
     )
     if summary.invalidated_token_ids:

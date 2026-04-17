@@ -97,3 +97,19 @@ pip install -r requirements.txt
 See `backend/README.md` for the backend API and startup flow.
 
 See `RELEASE_CHECKLIST.md` for backend and Flutter deployment requirements.
+
+## Notification System Release Notes
+
+The production notification system now includes:
+
+- paginated in-app notifications feed
+- stable read/unread state
+- encrypted local feed cache
+- notification preferences
+- typed deep-link routing
+- Firebase Messaging lifecycle hooks
+
+For implementation details, Firebase/FCM setup, the deep-link contract, and a
+full manual QA checklist, see:
+
+- `NOTIFICATIONS_RELEASE.md`

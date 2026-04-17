@@ -105,10 +105,12 @@ class NotificationNavigationService {
         );
         return;
       case NotificationRouteType.search:
+        final initialQuery = (route.payload['query'] ?? '').toString().trim();
         await Navigator.of(context).push(
           MaterialPageRoute(
             builder: (_) => RegulationSearchPage(
               isArabic: isArabic,
+              initialQuery: initialQuery,
               onSessionExpired: onSessionExpired,
             ),
           ),
