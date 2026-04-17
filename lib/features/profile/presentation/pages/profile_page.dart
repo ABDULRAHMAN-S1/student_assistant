@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 
 import '../../../engagement/data/remote/engagement_api_client.dart';
 import '../../../engagement/data/repositories/engagement_repository.dart';
+import '../../../engagement/data/repositories/engagement_repository_impl.dart';
+import '../../../engagement/domain/models/notification_preferences.dart';
 import '../../data/demo/demo_profile_repository.dart';
 import '../../data/local/profile_store.dart';
 import '../../domain/models/academic_context.dart';
@@ -26,14 +28,17 @@ class _ProfilePageState extends State<ProfilePage> {
   final _currentSemesterController = TextEditingController();
   final _courseIdController = TextEditingController();
   final EngagementRepository _engagementRepository =
-      const EngagementApiClient();
+      EngagementRepositoryImpl();
 
   bool _isLoading = true;
   bool _isSaving = false;
+  bool _isSavingPreferences = false;
   StudentProfile? _loadedProfile;
   String? _selectedAcademicLevel;
   final Set<String> _selectedInterests = <String>{};
   final List<String> _enrolledCourseIds = <String>[];
+  NotificationPreferences _notificationPreferences =
+      const NotificationPreferences();
 
   static const Color _backgroundColor = Color(0xFFFBF4FC);
   static const Color _cardColor = Colors.white;
@@ -164,6 +169,8 @@ class _ProfilePageState extends State<ProfilePage> {
               .map(_normalizeInterest)
               .where((value) => value.isNotEmpty),
         );
+      _notificationPreferences =
+          await _engagementRepository.getNotificationPreferences();
     } catch (_) {
       // Keep local profile behavior even when backend profile sync fails.
     }
@@ -386,6 +393,93 @@ class _ProfilePageState extends State<ProfilePage> {
       }
       _courseIdController.clear();
     });
+  }
+
+  Future<void> _setNotificationPreferences({
+    bool? enablePush,
+    bool? enableInApp,
+    List<NotificationCategoryPreferenceUpdate> categories = const [],
+  }) async {
+    setState(() {
+      _isSavingPreferences = true;
+    });
+    try {
+      final updated = await _engagementRepository.updateNotificationPreferences(
+        enablePush: enablePush,
+        enableInApp: enableInApp,
+        categories: categories,
+      );
+      if (!mounted) return;
+      setState(() {
+        _notificationPreferences = updated;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _t(
+              'تعذر تحديث تفضيلات الإشعارات.',
+              'Could not update notification preferences.',
+            ),
+          ),
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isSavingPreferences = false;
+        });
+      }
+    }
+  }
+
+  bool _categoryPushEnabled(String category) {
+    NotificationCategoryPreference? match;
+    for (final item in _notificationPreferences.categories) {
+      if (item.category == category) {
+        match = item;
+        break;
+      }
+    }
+    return match?.enablePush ?? _notificationPreferences.enablePush;
+  }
+
+  bool _categoryInAppEnabled(String category) {
+    NotificationCategoryPreference? match;
+    for (final item in _notificationPreferences.categories) {
+      if (item.category == category) {
+        match = item;
+        break;
+      }
+    }
+    return match?.enableInApp ?? _notificationPreferences.enableInApp;
+  }
+
+  Widget _buildPreferenceSwitch({
+    required String titleAr,
+    required String titleEn,
+    required String subtitleAr,
+    required String subtitleEn,
+    required bool value,
+    required ValueChanged<bool> onChanged,
+  }) {
+    return SwitchListTile.adaptive(
+      contentPadding: EdgeInsets.zero,
+      value: value,
+      onChanged: _isSavingPreferences ? null : onChanged,
+      title: Text(
+        _t(titleAr, titleEn),
+        style: const TextStyle(
+          color: _primaryText,
+          fontWeight: FontWeight.w700,
+        ),
+      ),
+      subtitle: Text(
+        _t(subtitleAr, subtitleEn),
+        style: const TextStyle(color: _mutedText, height: 1.35),
+      ),
+    );
   }
 
   StudentProfile _buildUpdatedProfile() {
@@ -814,6 +908,86 @@ class _ProfilePageState extends State<ProfilePage> {
                               )
                               .toList(growable: false),
                         ),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+                  _buildSectionCard(
+                    title: _t('تفضيلات الإشعارات', 'Notification Preferences'),
+                    icon: Icons.notifications_outlined,
+                    children: [
+                      if (_isSavingPreferences)
+                        const LinearProgressIndicator(minHeight: 2),
+                      _buildPreferenceSwitch(
+                        titleAr: 'الإشعارات الفورية',
+                        titleEn: 'Push notifications',
+                        subtitleAr:
+                            'استلام إشعارات الدفع عندما يكون التطبيق في الخلفية أو مغلقًا.',
+                        subtitleEn:
+                            'Receive push notifications when the app is in background or closed.',
+                        value: _notificationPreferences.enablePush,
+                        onChanged: (value) {
+                          _setNotificationPreferences(enablePush: value);
+                        },
+                      ),
+                      _buildPreferenceSwitch(
+                        titleAr: 'الإشعارات داخل التطبيق',
+                        titleEn: 'In-app notifications',
+                        subtitleAr:
+                            'إظهار الإشعارات داخل قائمة التنبيهات داخل التطبيق.',
+                        subtitleEn:
+                            'Show notifications inside the in-app notification inbox.',
+                        value: _notificationPreferences.enableInApp,
+                        onChanged: (value) {
+                          _setNotificationPreferences(enableInApp: value);
+                        },
+                      ),
+                      const Divider(height: 24),
+                      _buildPreferenceSwitch(
+                        titleAr: 'تنبيهات الفعاليات',
+                        titleEn: 'Event alerts',
+                        subtitleAr: 'الإشعارات المرتبطة بالفعاليات والأنشطة.',
+                        subtitleEn:
+                            'Notifications related to events and activities.',
+                        value: _categoryPushEnabled('live_event'),
+                        onChanged: (value) {
+                          _setNotificationPreferences(
+                            categories: [
+                              NotificationCategoryPreferenceUpdate(
+                                category: 'live_event',
+                                enablePush: value,
+                                enableInApp: _categoryInAppEnabled('live_event'),
+                              ),
+                            ],
+                          );
+                        },
+                      ),
+                      _buildPreferenceSwitch(
+                        titleAr: 'تنبيهات الفرص والمواعيد',
+                        titleEn: 'Opportunity and deadline alerts',
+                        subtitleAr:
+                            'الإشعارات المرتبطة بالفرص والمواعيد الأكاديمية.',
+                        subtitleEn:
+                            'Notifications for opportunities and academic deadlines.',
+                        value: _categoryPushEnabled('live_opportunity'),
+                        onChanged: (value) {
+                          _setNotificationPreferences(
+                            categories: [
+                              NotificationCategoryPreferenceUpdate(
+                                category: 'live_opportunity',
+                                enablePush: value,
+                                enableInApp:
+                                    _categoryInAppEnabled('live_opportunity'),
+                              ),
+                              NotificationCategoryPreferenceUpdate(
+                                category: 'live_deadline',
+                                enablePush: value,
+                                enableInApp:
+                                    _categoryInAppEnabled('live_deadline'),
+                              ),
+                            ],
+                          );
+                        },
+                      ),
                     ],
                   ),
                   const SizedBox(height: 18),

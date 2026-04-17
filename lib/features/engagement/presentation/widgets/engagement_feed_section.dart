@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../domain/models/notification_item.dart';
 import '../../domain/models/suggestion_item.dart';
 import '../controllers/engagement_feed_controller.dart';
 import 'feed_empty_state.dart';
@@ -13,6 +14,7 @@ class EngagementFeedSection extends StatelessWidget {
     required this.controller,
     required this.isArabic,
     required this.onMarkAsRead,
+    required this.onOpenNotification,
     required this.onOpenSuggestion,
     required this.onOpenProfile,
   });
@@ -20,6 +22,7 @@ class EngagementFeedSection extends StatelessWidget {
   final EngagementFeedController controller;
   final bool isArabic;
   final Future<void> Function(String notificationId) onMarkAsRead;
+  final void Function(NotificationItem item) onOpenNotification;
   final void Function(SuggestionItem item) onOpenSuggestion;
   final VoidCallback onOpenProfile;
 
@@ -65,6 +68,10 @@ class EngagementFeedSection extends StatelessWidget {
                   ((controller.data!.notifications.isNotEmpty) ||
                       (controller.data!.suggestions.isNotEmpty)))
                 _buildLoadedState(context),
+              if (controller.isLoadingMore) ...[
+                const SizedBox(height: 12),
+                const Center(child: CircularProgressIndicator(strokeWidth: 2)),
+              ],
             ],
           ),
         );
@@ -166,12 +173,22 @@ class EngagementFeedSection extends StatelessWidget {
               child: NotificationCard(
                 item: item,
                 isArabic: isArabic,
-                marking: controller.isMarkingRead,
+                marking: controller.isMarkingNotification(item.id),
                 onMarkAsRead: () => onMarkAsRead(item.id),
+                onOpen: () => onOpenNotification(item),
               ),
             ),
           ),
           const SizedBox(height: 4),
+          if (feed.page.hasMore)
+            Align(
+              alignment: Alignment.centerLeft,
+              child: TextButton.icon(
+                onPressed: controller.isLoadingMore ? null : controller.loadMore,
+                icon: const Icon(Icons.expand_more_rounded),
+                label: Text(isArabic ? 'تحميل المزيد' : 'Load more'),
+              ),
+            ),
         ],
         if (feed.suggestions.isNotEmpty) ...[
           Text(

@@ -11,8 +11,12 @@ import 'features/courses/data/demo/demo_course_repository.dart';
 import 'features/courses/data/repositories/course_repository.dart';
 import 'features/events/data/demo/demo_event_repository.dart';
 import 'features/events/data/repositories/event_repository.dart';
-import 'features/engagement/data/remote/engagement_api_client.dart';
+import 'features/engagement/data/repositories/engagement_repository.dart';
+import 'features/engagement/data/repositories/engagement_repository_impl.dart';
+import 'features/engagement/domain/models/notification_item.dart';
 import 'features/engagement/presentation/controllers/engagement_feed_controller.dart';
+import 'features/engagement/presentation/services/notification_navigation_service.dart';
+import 'features/engagement/presentation/services/push_notification_service.dart';
 import 'features/engagement/presentation/widgets/engagement_feed_section.dart';
 import 'features/engagement/domain/models/suggestion_item.dart';
 import 'features/profile/data/demo/demo_profile_repository.dart';
@@ -77,6 +81,7 @@ class _HomePageState extends State<HomePage> {
   bool _isHandlingSessionExpiry = false;
   late Future<List<RecommendationItem>> _recommendationsFuture;
   EngagementFeedController? _engagementController;
+  late final EngagementRepository _engagementRepository;
 
   bool get _isAdmin => widget.authSession?.isAdmin == true;
 
@@ -84,6 +89,7 @@ class _HomePageState extends State<HomePage> {
   void initState() {
     super.initState();
     _isArabic = widget.isArabic;
+    _engagementRepository = EngagementRepositoryImpl();
     _recommendationsFuture = _loadRecommendations();
     _setupEngagementController();
   }
@@ -117,18 +123,31 @@ class _HomePageState extends State<HomePage> {
     _engagementController?.dispose();
     if (widget.isGuest || widget.authSession == null) {
       _engagementController = null;
+      PushNotificationService.instance.unregisterCurrentDevice(
+        repository: _engagementRepository,
+      );
       return;
     }
     final controller = EngagementFeedController(
-      repository: const EngagementApiClient(),
+      repository: _engagementRepository,
     );
     _engagementController = controller;
     controller.addListener(() {
+      if (controller.sessionExpiredMessage != null) {
+        controller.clearSessionExpiredFlag();
+        _handleSessionExpired();
+      }
       if (mounted) {
         setState(() {});
       }
     });
     controller.loadInitial();
+    PushNotificationService.instance.registerForSession(
+      repository: _engagementRepository,
+      session: widget.authSession,
+      context: context,
+      isArabic: _isArabic,
+    );
   }
 
   Future<List<RecommendationItem>> _loadRecommendations() async {
@@ -264,6 +283,46 @@ class _HomePageState extends State<HomePage> {
     await _engagementController?.refresh();
   }
 
+  void _openNotificationsInbox() {
+    if (widget.isGuest || _engagementController == null) {
+      _showLoginDialog(_isArabic ? 'الإشعارات' : 'Notifications');
+      return;
+    }
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (sheetContext) {
+        return SafeArea(
+          top: false,
+          child: Container(
+            constraints: BoxConstraints(
+              maxHeight: MediaQuery.of(context).size.height * 0.88,
+            ),
+            decoration: const BoxDecoration(
+              color: AppColors.card,
+              borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+            ),
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.fromLTRB(16, 18, 16, 24),
+              child: EngagementFeedSection(
+                controller: _engagementController!,
+                isArabic: _isArabic,
+                onMarkAsRead: _markEngagementNotificationAsRead,
+                onOpenNotification: _openNotification,
+                onOpenSuggestion: _openSuggestionDetails,
+                onOpenProfile: () {
+                  Navigator.of(sheetContext).pop();
+                  _openProfilePage();
+                },
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
   Future<void> _markEngagementNotificationAsRead(String notificationId) async {
     final controller = _engagementController;
     if (controller == null) {
@@ -295,6 +354,16 @@ class _HomePageState extends State<HomePage> {
         color: AppColors.destructive,
       );
     }
+  }
+
+  Future<void> _openNotification(NotificationItem item) async {
+    await NotificationNavigationService.instance.openNotification(
+      context,
+      item: item,
+      isArabic: _isArabic,
+      onSessionExpired: _handleSessionExpired,
+      onOpenInbox: _openNotificationsInbox,
+    );
   }
 
   void _openSuggestionDetails(SuggestionItem item) {
@@ -432,6 +501,7 @@ class _HomePageState extends State<HomePage> {
             controller: _engagementController!,
             isArabic: _isArabic,
             onMarkAsRead: _markEngagementNotificationAsRead,
+            onOpenNotification: _openNotification,
             onOpenSuggestion: _openSuggestionDetails,
             onOpenProfile: _openProfilePage,
           ),
@@ -1156,8 +1226,7 @@ class _HomePageState extends State<HomePage> {
           _openProfilePage();
         },
         onLanguage: _toggleLanguage,
-        onNotifications: () =>
-            _toast(_isArabic ? 'الإشعارات' : 'Notifications'),
+        onNotifications: _openNotificationsInbox,
         onLogout: widget.onLogout,
       ),
       body: IndexedStack(index: currentIndex, children: _buildPages()),
