@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
 from uuid import NAMESPACE_URL, uuid4, uuid5
 
@@ -7,8 +8,34 @@ from fastapi import HTTPException
 
 try:
     from app import database
+    from app.notification_delivery import DeliverySummary, get_notification_delivery_service
+    from app.notification_targets import route_for_live_content, validate_notification_route
+    from app.schemas import (
+        DeviceTokenResponse,
+        EngagementFeedResponse,
+        NotificationCategoryPreference,
+        NotificationItemResponse,
+        NotificationPreferencesResponse,
+        NotificationReadResponse,
+        NotificationRoute,
+        StudentProfileResponse,
+        SuggestionItemResponse,
+    )
 except ImportError:
     import database  # type: ignore
+    from notification_delivery import DeliverySummary, get_notification_delivery_service  # type: ignore
+    from notification_targets import route_for_live_content, validate_notification_route  # type: ignore
+    from schemas import (  # type: ignore
+        DeviceTokenResponse,
+        EngagementFeedResponse,
+        NotificationCategoryPreference,
+        NotificationItemResponse,
+        NotificationPreferencesResponse,
+        NotificationReadResponse,
+        NotificationRoute,
+        StudentProfileResponse,
+        SuggestionItemResponse,
+    )
 
 ALLOWED_CONTENT_TYPES = frozenset({"event", "academic_tip", "opportunity", "deadline"})
 MAX_NOTIFICATION_MESSAGE_LENGTH = 260
@@ -38,6 +65,82 @@ def _ensure_iso(value: datetime | None) -> str | None:
     if value.tzinfo is None:
         value = value.replace(tzinfo=timezone.utc)
     return value.astimezone(timezone.utc).isoformat()
+
+
+def _normalized_category(category: str) -> str:
+    cleaned = _clean_text(category).lower()
+    if not cleaned:
+        raise HTTPException(
+            status_code=422,
+            detail={"code": "validation_error", "message": "Notification category must not be empty."},
+        )
+    return cleaned
+
+
+def _normalize_category_preferences(categories: list[dict[str, object]]) -> list[dict[str, object]]:
+    normalized: list[dict[str, object]] = []
+    seen: set[str] = set()
+    for category in categories:
+        normalized_category = _normalized_category(str(category.get("category") or ""))
+        if normalized_category in seen:
+            continue
+        normalized.append(
+            {
+                "category": normalized_category,
+                "enable_push": bool(category.get("enable_push", True)),
+                "enable_in_app": bool(category.get("enable_in_app", True)),
+                "muted": bool(category.get("muted", False)),
+            }
+        )
+        seen.add(normalized_category)
+    normalized.sort(key=lambda item: str(item["category"]))
+    return normalized
+
+
+def _category_settings(preferences: dict[str, object], category: str) -> dict[str, bool]:
+    normalized_category = _normalized_category(category)
+    category_settings = {
+        "enable_push": bool(preferences.get("enable_push", True)),
+        "enable_in_app": bool(preferences.get("enable_in_app", True)),
+        "muted": False,
+    }
+    for item in list(preferences.get("categories") or []):
+        if _normalized_category(str(item.get("category") or "")) != normalized_category:
+            continue
+        if "enable_push" in item:
+            category_settings["enable_push"] = bool(item.get("enable_push"))
+        if "enable_in_app" in item:
+            category_settings["enable_in_app"] = bool(item.get("enable_in_app"))
+        if "muted" in item:
+            category_settings["muted"] = bool(item.get("muted"))
+        break
+    return category_settings
+
+
+def _serialize_profile(profile: dict[str, object]) -> dict[str, object]:
+    return StudentProfileResponse.model_validate(profile).model_dump()
+
+
+def _serialize_suggestion(suggestion: dict[str, object]) -> dict[str, object]:
+    return SuggestionItemResponse.model_validate(suggestion).model_dump()
+
+
+def _serialize_notification(notification: dict[str, object]) -> dict[str, object]:
+    metadata = dict(notification.get("metadata") or {})
+    route = validate_notification_route(metadata.get("route") if isinstance(metadata, dict) else None)
+    metadata["route"] = NotificationRoute.model_validate(route).model_dump()
+    payload = {
+        "id": notification.get("id"),
+        "category": notification.get("category"),
+        "title": notification.get("title"),
+        "message": notification.get("message"),
+        "is_read": notification.get("is_read"),
+        "priority": notification.get("priority"),
+        "created_at": notification.get("created_at"),
+        "read_at": notification.get("read_at"),
+        "metadata": metadata,
+    }
+    return NotificationItemResponse.model_validate(payload).model_dump()
 
 
 def get_student_profile(user_id: str) -> dict[str, object]:
@@ -143,8 +246,124 @@ def _score_item(*, item: dict[str, object], profile: dict[str, object]) -> tuple
     return score, reasons
 
 
+def get_notification_preferences(*, user_id: str) -> dict[str, object]:
+    stored = database.fetch_notification_preferences(user_id)
+    payload = {
+        "enable_push": bool(stored.get("enable_push", True)),
+        "enable_in_app": bool(stored.get("enable_in_app", True)),
+        "categories": _normalize_category_preferences(list(stored.get("categories") or [])),
+        "updated_at": stored.get("updated_at"),
+    }
+    return NotificationPreferencesResponse.model_validate(payload).model_dump()
+
+
+def update_notification_preferences(
+    *,
+    user_id: str,
+    enable_push: bool | None,
+    enable_in_app: bool | None,
+    categories: list[dict[str, object]],
+) -> dict[str, object]:
+    current = get_notification_preferences(user_id=user_id)
+    by_category = {
+        str(item["category"]): dict(item)
+        for item in list(current.get("categories") or [])
+    }
+    for category in categories:
+        normalized_category = _normalized_category(str(category.get("category") or ""))
+        merged = dict(by_category.get(normalized_category) or {"category": normalized_category})
+        for key in ("enable_push", "enable_in_app", "muted"):
+            if category.get(key) is not None:
+                merged[key] = bool(category.get(key))
+        by_category[normalized_category] = merged
+    stored = database.upsert_notification_preferences(
+        user_id=user_id,
+        enable_push=bool(current["enable_push"] if enable_push is None else enable_push),
+        enable_in_app=bool(current["enable_in_app"] if enable_in_app is None else enable_in_app),
+        categories=_normalize_category_preferences(list(by_category.values())),
+    )
+    return get_notification_preferences(user_id=str(stored["user_id"]))
+
+
+def register_device_token(
+    *,
+    user_id: str,
+    token: str,
+    platform: str,
+    device_name: str,
+    app_version: str,
+    locale: str,
+) -> dict[str, object]:
+    created = database.upsert_notification_device_token(
+        token_id=uuid4().hex,
+        user_id=user_id,
+        token=_clean_text(token),
+        platform=_clean_text(platform).lower(),
+        device_name=_clean_text(device_name),
+        app_version=_clean_text(app_version),
+        locale=_clean_text(locale).lower(),
+    )
+    return DeviceTokenResponse.model_validate(created).model_dump()
+
+
+def delete_device_token(*, user_id: str, token_id: str) -> bool:
+    return database.delete_notification_device_token(user_id=user_id, token_id=token_id)
+
+
+def _deliver_push_if_needed(
+    *,
+    user_id: str,
+    notification_id: str,
+    title: str,
+    message: str,
+    category: str,
+    route: dict[str, object],
+) -> DeliverySummary | None:
+    preferences = get_notification_preferences(user_id=user_id)
+    category_settings = _category_settings(preferences, category)
+    if not category_settings["enable_push"] or category_settings["muted"]:
+        database.update_notification_delivery(
+            notification_id=notification_id,
+            user_id=user_id,
+            push_status="disabled",
+            last_delivery_error="push_disabled_by_preference",
+        )
+        return None
+    delivery_service = get_notification_delivery_service()
+    tokens = database.list_active_notification_device_tokens(user_id)
+    summary = delivery_service.send_notification(
+        device_tokens=tokens,
+        title=title,
+        body=message,
+        data={
+            "notification_id": notification_id,
+            "category": category,
+            "route": json.dumps(route, ensure_ascii=False),
+            "route_type": str(route.get("type") or "engagement"),
+        },
+    )
+    if summary.invalidated_token_ids:
+        database.invalidate_notification_device_tokens(
+            token_ids=list(summary.invalidated_token_ids),
+            reason="provider_rejected_token",
+        )
+    status = "delivered" if summary.delivered_count > 0 else "failed"
+    database.update_notification_delivery(
+        notification_id=notification_id,
+        user_id=user_id,
+        push_status=status,
+        delivered_at=datetime.now(timezone.utc).isoformat() if summary.delivered_count > 0 else None,
+        last_delivery_error="; ".join(
+            filter(None, [attempt.error_code or attempt.error_message for attempt in summary.failures if not attempt.success])
+        )[:500]
+        or None,
+    )
+    return summary
+
+
 def generate_notifications_for_user(*, user_id: str, limit: int = 25) -> int:
     profile = get_student_profile(user_id)
+    preferences = get_notification_preferences(user_id=user_id)
     now_iso = datetime.now(timezone.utc).isoformat()
     active_items = database.list_active_live_content(now_iso=now_iso, limit=200)
     ranked_items: list[tuple[int, dict[str, object], list[str]]] = []
@@ -158,6 +377,10 @@ def generate_notifications_for_user(*, user_id: str, limit: int = 25) -> int:
     inserted = 0
     for score, item, reasons in ranked_items[:limit]:
         category = f"live_{item['content_type']}"
+        category_settings = _category_settings(preferences, category)
+        if not category_settings["enable_in_app"] or category_settings["muted"]:
+            continue
+        route = route_for_live_content(item)
         notification_id = str(uuid5(NAMESPACE_URL, f"{user_id}:{item['id']}:{category}"))
         created = database.insert_notification(
             notification_id=notification_id,
@@ -171,14 +394,32 @@ def generate_notifications_for_user(*, user_id: str, limit: int = 25) -> int:
                 "content_type": item["content_type"],
                 "match_reasons": reasons,
                 "link_url": item.get("link_url") or "",
+                "route": route,
             },
+            route_type=str(route["type"]),
+            route_payload=dict(route.get("payload") or {}),
         )
-        if created:
-            inserted += 1
+        if not created:
+            continue
+        inserted += 1
+        _deliver_push_if_needed(
+            user_id=user_id,
+            notification_id=notification_id,
+            title=str(item["title"]),
+            message=str(item["body"])[:MAX_NOTIFICATION_MESSAGE_LENGTH],
+            category=category,
+            route=route,
+        )
     return inserted
 
 
-def get_personalized_feed(*, user_id: str, include_read: bool, limit: int = 20) -> dict[str, object]:
+def get_personalized_feed(
+    *,
+    user_id: str,
+    include_read: bool,
+    limit: int = 20,
+    cursor: str | None = None,
+) -> dict[str, object]:
     profile = get_student_profile(user_id)
     now_iso = datetime.now(timezone.utc).isoformat()
     active_items = database.list_active_live_content(now_iso=now_iso, limit=30)
@@ -194,34 +435,60 @@ def get_personalized_feed(*, user_id: str, include_read: bool, limit: int = 20) 
 
     for score, item, reasons in ranked_items[:10]:
         suggestions.append(
-            {
-                "id": item["id"],
-                "content_type": item["content_type"],
-                "title": item["title"],
-                "body_preview": str(item["body"])[:180],
-                "link_url": item.get("link_url") or "",
-                "priority": item.get("priority", 0),
-                "match_score": score,
-                "match_reasons": reasons,
-                "starts_at": item.get("starts_at"),
-                "ends_at": item.get("ends_at"),
-            }
+            _serialize_suggestion(
+                {
+                    "id": item["id"],
+                    "content_type": item["content_type"],
+                    "title": item["title"],
+                    "body_preview": str(item["body"])[:180],
+                    "link_url": item.get("link_url") or "",
+                    "priority": item.get("priority", 0),
+                    "match_score": score,
+                    "match_reasons": reasons,
+                    "starts_at": item.get("starts_at"),
+                    "ends_at": item.get("ends_at"),
+                }
+            )
         )
 
-    notifications = database.list_notifications(
-        user_id=user_id,
-        limit=limit,
-        unread_only=not include_read,
-    )
+    try:
+        notifications_page = database.list_notifications(
+            user_id=user_id,
+            limit=limit,
+            unread_only=not include_read,
+            cursor=cursor,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail={"code": "validation_error", "message": f"Invalid pagination cursor: {exc}"},
+        ) from exc
     unread_count = database.count_unread_notifications(user_id)
-    return {
-        "generated_count": 0,
-        "unread_count": unread_count,
-        "profile": profile,
-        "notifications": notifications,
-        "suggestions": suggestions,
-    }
+    response = EngagementFeedResponse.model_validate(
+        {
+            "generated_count": 0,
+            "unread_count": unread_count,
+            "profile": _serialize_profile(profile),
+            "notifications": [_serialize_notification(item) for item in notifications_page["items"]],
+            "suggestions": suggestions,
+            "page": {
+                "has_more": bool(notifications_page["has_more"]),
+                "next_cursor": notifications_page["next_cursor"],
+            },
+        }
+    )
+    return response.model_dump()
 
 
-def mark_notification_as_read(*, user_id: str, notification_id: str) -> bool:
-    return database.mark_notification_as_read(user_id=user_id, notification_id=notification_id)
+def mark_notification_as_read(*, user_id: str, notification_id: str) -> dict[str, object] | None:
+    database.mark_notification_as_read(user_id=user_id, notification_id=notification_id)
+    updated = database.fetch_notification(notification_id, user_id=user_id)
+    if updated is None:
+        return None
+    return NotificationReadResponse.model_validate(
+        {
+            "status": "ok",
+            "notification": _serialize_notification(updated),
+            "unread_count": database.count_unread_notifications(user_id),
+        }
+    ).model_dump()

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -22,6 +23,15 @@ MAX_CONTENT_BODY_LENGTH = 2000
 MAX_CONTENT_TYPE_LENGTH = 40
 MAX_CONTENT_TAGS = 12
 MAX_LINK_URL_LENGTH = 500
+MAX_NOTIFICATION_CATEGORY_LENGTH = 80
+MAX_NOTIFICATION_TOKEN_LENGTH = 4096
+MAX_NOTIFICATION_PLATFORM_LENGTH = 32
+MAX_NOTIFICATION_DEVICE_NAME_LENGTH = 120
+MAX_NOTIFICATION_APP_VERSION_LENGTH = 40
+MAX_NOTIFICATION_LOCALE_LENGTH = 16
+MAX_NOTIFICATION_CURSOR_LENGTH = 512
+MAX_NOTIFICATION_ROUTE_TYPE_LENGTH = 32
+MAX_NOTIFICATION_CATEGORY_PREFERENCES = 32
 
 
 class StrictModel(BaseModel):
@@ -89,3 +99,141 @@ class LiveContentCreateRequest(StrictModel):
     priority: int = Field(0, ge=0, le=10)
     starts_at: datetime | None = None
     ends_at: datetime | None = None
+
+
+NotificationRouteType = Literal[
+    "course",
+    "event",
+    "review",
+    "chat",
+    "search",
+    "external_url",
+    "engagement",
+]
+
+
+class NotificationRoute(StrictModel):
+    type: NotificationRouteType
+    payload: dict[str, Any] = Field(default_factory=dict)
+
+
+class NotificationMetadataResponse(StrictModel):
+    content_type: str | None = None
+    match_reasons: list[str] = Field(default_factory=list)
+    link_url: str | None = None
+    route: NotificationRoute | None = None
+
+
+class NotificationItemResponse(StrictModel):
+    id: str
+    category: str
+    title: str
+    message: str
+    is_read: bool
+    priority: int
+    created_at: str
+    read_at: str | None = None
+    metadata: NotificationMetadataResponse
+
+
+class NotificationFeedPageResponse(StrictModel):
+    has_more: bool = False
+    next_cursor: str | None = None
+
+
+class StudentProfileResponse(StrictModel):
+    user_id: str
+    major: str
+    academic_level: str
+    track: str
+    interests: list[str] = Field(default_factory=list)
+    updated_at: str | None = None
+
+
+class SuggestionItemResponse(StrictModel):
+    id: str
+    content_type: str
+    title: str
+    body_preview: str
+    link_url: str = ""
+    priority: int = 0
+    match_score: int = 0
+    match_reasons: list[str] = Field(default_factory=list)
+    starts_at: str | None = None
+    ends_at: str | None = None
+
+
+class EngagementFeedResponse(StrictModel):
+    generated_count: int = 0
+    unread_count: int = 0
+    profile: StudentProfileResponse
+    notifications: list[NotificationItemResponse] = Field(default_factory=list)
+    suggestions: list[SuggestionItemResponse] = Field(default_factory=list)
+    page: NotificationFeedPageResponse = Field(default_factory=NotificationFeedPageResponse)
+
+
+class NotificationCategoryPreference(StrictModel):
+    category: str = Field(..., min_length=1, max_length=MAX_NOTIFICATION_CATEGORY_LENGTH)
+    enable_push: bool = True
+    enable_in_app: bool = True
+    muted: bool = False
+
+
+class NotificationCategoryPreferenceUpdate(StrictModel):
+    category: str = Field(..., min_length=1, max_length=MAX_NOTIFICATION_CATEGORY_LENGTH)
+    enable_push: bool | None = None
+    enable_in_app: bool | None = None
+    muted: bool | None = None
+
+
+class NotificationPreferencesResponse(StrictModel):
+    enable_push: bool = True
+    enable_in_app: bool = True
+    categories: list[NotificationCategoryPreference] = Field(default_factory=list)
+    updated_at: str | None = None
+
+
+class NotificationPreferencesUpdateRequest(StrictModel):
+    enable_push: bool | None = None
+    enable_in_app: bool | None = None
+    categories: list[NotificationCategoryPreferenceUpdate] = Field(
+        default_factory=list,
+        max_length=MAX_NOTIFICATION_CATEGORY_PREFERENCES,
+    )
+
+
+class DeviceTokenRegisterRequest(StrictModel):
+    token: str = Field(..., min_length=32, max_length=MAX_NOTIFICATION_TOKEN_LENGTH)
+    platform: str = Field(..., min_length=2, max_length=MAX_NOTIFICATION_PLATFORM_LENGTH)
+    device_name: str = Field("", max_length=MAX_NOTIFICATION_DEVICE_NAME_LENGTH)
+    app_version: str = Field("", max_length=MAX_NOTIFICATION_APP_VERSION_LENGTH)
+    locale: str = Field("", max_length=MAX_NOTIFICATION_LOCALE_LENGTH)
+
+
+class DeviceTokenResponse(StrictModel):
+    id: str
+    platform: str
+    device_name: str = ""
+    app_version: str = ""
+    locale: str = ""
+    is_active: bool = True
+    created_at: str
+    updated_at: str
+    last_seen_at: str
+    invalidated_at: str | None = None
+    invalidation_reason: str | None = None
+
+
+class DeviceTokenEnvelopeResponse(StrictModel):
+    token: DeviceTokenResponse
+
+
+class NotificationReadResponse(StrictModel):
+    status: str = "ok"
+    notification: NotificationItemResponse
+    unread_count: int
+
+
+class NotificationGenerateResponse(StrictModel):
+    status: str = "ok"
+    generated_count: int = 0
