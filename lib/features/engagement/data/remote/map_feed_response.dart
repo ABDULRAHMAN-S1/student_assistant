@@ -90,6 +90,12 @@ NotificationReadResult mapNotificationReadResult(Map<String, dynamic> json) {
   );
 }
 
+NotificationReadResult mapNotificationReadResponse(
+  Map<String, dynamic> payload,
+) {
+  return mapNotificationReadResult(payload);
+}
+
 NotificationPreferences mapNotificationPreferences(Map<String, dynamic> json) {
   final categoriesRaw = json['categories'];
   return NotificationPreferences(
@@ -128,7 +134,8 @@ NotificationRoute? _mapNotificationRoute(Object? raw) {
   }
   final payload = raw['payload'];
   return NotificationRoute(
-    type: NotificationRouteTypeX.tryParse(type) ??
+    type:
+        NotificationRouteTypeX.tryParse(type) ??
         NotificationRouteType.engagement,
     payload: payload is Map<String, dynamic>
         ? Map<String, dynamic>.from(payload)

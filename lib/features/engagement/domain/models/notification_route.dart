@@ -29,6 +29,8 @@ extension NotificationRouteTypeX on NotificationRouteType {
     return null;
   }
 
+  static NotificationRouteType? tryParse(String? raw) => fromString(raw);
+
   String get wireValue {
     switch (this) {
       case NotificationRouteType.course:
@@ -69,15 +71,13 @@ class NotificationRoute {
   }
 
   Map<String, dynamic> toJson() {
-    return {
-      'type': type.wireValue,
-      'payload': payload,
-    };
+    return {'type': type.wireValue, 'payload': payload};
   }
 
   factory NotificationRoute.fromJson(Map<String, dynamic> json) {
     return NotificationRoute(
-      type: NotificationRouteTypeX.fromString(json['type']?.toString()) ??
+      type:
+          NotificationRouteTypeX.fromString(json['type']?.toString()) ??
           NotificationRouteType.engagement,
       payload: json['payload'] is Map
           ? Map<String, dynamic>.from(json['payload'] as Map)

@@ -55,9 +55,9 @@ class NotificationCategorySetting extends NotificationCategoryPreference {
 
 class NotificationPreferences {
   const NotificationPreferences({
-    required this.enablePush,
-    required this.enableInApp,
-    required this.categories,
+    this.enablePush = true,
+    this.enableInApp = true,
+    this.categories = const [],
     this.updatedAt,
   });
 

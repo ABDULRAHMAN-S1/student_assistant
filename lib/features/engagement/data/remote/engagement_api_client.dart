@@ -9,6 +9,7 @@ import '../../../../app/app_settings_store.dart';
 import '../../../auth/data/remote/auth_api_client.dart';
 import '../../../auth/domain/models/auth_session.dart';
 import '../../domain/models/engagement_feed.dart';
+import '../../domain/models/notification_category_preference_update.dart';
 import '../../domain/models/notification_device_token.dart';
 import '../../domain/models/notification_preferences.dart';
 import '../../domain/models/notification_read_result.dart';
@@ -85,7 +86,9 @@ class EngagementApiClient {
     return mapFeedResponse(payload);
   }
 
-  Future<NotificationReadResult> markNotificationRead(String notificationId) async {
+  Future<NotificationReadResult> markNotificationRead(
+    String notificationId,
+  ) async {
     final payload = await _authorizedRequest(
       'PATCH',
       '/engagement/notifications/$notificationId/read',
@@ -179,8 +182,8 @@ class EngagementApiClient {
       'PUT',
       '/engagement/notifications/preferences',
       body: {
-        if (enablePush != null) 'enable_push': enablePush,
-        if (enableInApp != null) 'enable_in_app': enableInApp,
+        'enable_push': enablePush,
+        'enable_in_app': enableInApp,
         'categories': categories.map((item) => item.toJson()).toList(),
       },
     );

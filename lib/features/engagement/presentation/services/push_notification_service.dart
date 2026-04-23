@@ -9,6 +9,8 @@ import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 
 import '../../../auth/domain/models/auth_session.dart';
 import '../../data/repositories/engagement_repository.dart';
+import '../../domain/models/notification_preferences.dart';
+import '../../domain/models/notification_route.dart';
 import 'notification_navigation_service.dart';
 
 Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
@@ -53,7 +55,7 @@ class PushNotificationService {
     );
     const initSettings = InitializationSettings(android: androidSettings);
     await _localNotifications.initialize(
-      initSettings,
+      settings: initSettings,
       onDidReceiveNotificationResponse: (response) {
         final route = _routeFromPayload(response.payload);
         if (route != null && _context != null) {
@@ -74,23 +76,24 @@ class PushNotificationService {
     _tapSubscription = FirebaseMessaging.onMessageOpenedApp.listen((message) {
       NotificationNavigationService.instance.handleRemoteMessage(message);
     });
-    _tokenRefreshSubscription = FirebaseMessaging.instance.onTokenRefresh.listen((
-      token,
-    ) {
-      _registeredToken = token;
-      final repository = _repository;
-      final context = _context;
-      if (repository == null || context == null) {
-        return;
-      }
-      unawaited(
-        repository.registerDeviceToken(
-          token: token,
-          platform: Platform.isIOS ? 'ios' : 'android',
-          locale: Localizations.localeOf(context).languageCode,
-        ),
-      );
-    });
+    _tokenRefreshSubscription = FirebaseMessaging.instance.onTokenRefresh
+        .listen((token) {
+          _registeredToken = token;
+          final repository = _repository;
+          final context = _context;
+          if (repository == null || context == null) {
+            return;
+          }
+          unawaited(
+            repository.registerDeviceToken(
+              token: token,
+              platform: Platform.isIOS ? 'ios' : 'android',
+              deviceName: '',
+              appVersion: '',
+              locale: Localizations.localeOf(context).languageCode,
+            ),
+          );
+        });
     _initialized = true;
   }
 
@@ -115,6 +118,7 @@ class PushNotificationService {
     required AuthSession? session,
     required BuildContext context,
     required bool isArabic,
+    required NotificationPreferences settings,
   }) async {
     _repository = repository;
     _context = context;
@@ -132,7 +136,8 @@ class PushNotificationService {
       if (token == null || token.isEmpty || token == _registeredToken) {
         return;
       }
-      final initialMessage = await FirebaseMessaging.instance.getInitialMessage();
+      final initialMessage = await FirebaseMessaging.instance
+          .getInitialMessage();
       if (initialMessage != null && context.mounted) {
         unawaited(
           NotificationNavigationService.instance.handleRemoteMessage(
@@ -145,6 +150,8 @@ class PushNotificationService {
       await repository.registerDeviceToken(
         token: token,
         platform: Platform.isIOS ? 'ios' : 'android',
+        deviceName: '',
+        appVersion: '',
         locale: Localizations.localeOf(context).languageCode,
       );
       _registeredToken = token;
@@ -180,10 +187,10 @@ class PushNotificationService {
       ),
     );
     await _localNotifications.show(
-      notification.hashCode,
-      notification.title,
-      notification.body,
-      details,
+      id: notification.hashCode,
+      title: notification.title,
+      body: notification.body,
+      notificationDetails: details,
       payload: _payloadFromData(message.data),
     );
   }

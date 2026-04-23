@@ -9,16 +9,16 @@ import 'features/admin/presentation/admin_panel_page.dart';
 import 'features/auth/domain/models/auth_session.dart';
 import 'features/courses/data/demo/demo_course_repository.dart';
 import 'features/courses/data/repositories/course_repository.dart';
-import 'features/events/data/demo/demo_event_repository.dart';
-import 'features/events/data/repositories/event_repository.dart';
 import 'features/engagement/data/repositories/engagement_repository.dart';
 import 'features/engagement/data/repositories/engagement_repository_impl.dart';
 import 'features/engagement/domain/models/notification_item.dart';
+import 'features/engagement/domain/models/suggestion_item.dart';
 import 'features/engagement/presentation/controllers/engagement_feed_controller.dart';
 import 'features/engagement/presentation/services/notification_navigation_service.dart';
 import 'features/engagement/presentation/services/push_notification_service.dart';
 import 'features/engagement/presentation/widgets/engagement_feed_section.dart';
-import 'features/engagement/domain/models/suggestion_item.dart';
+import 'features/events/data/demo/demo_event_repository.dart';
+import 'features/events/data/repositories/event_repository.dart';
 import 'features/profile/data/demo/demo_profile_repository.dart';
 import 'features/profile/data/local/profile_store.dart';
 import 'features/profile/presentation/pages/profile_page.dart';
@@ -142,12 +142,18 @@ class _HomePageState extends State<HomePage> {
       }
     });
     controller.loadInitial();
-    PushNotificationService.instance.registerForSession(
-      repository: _engagementRepository,
-      session: widget.authSession,
-      context: context,
-      isArabic: _isArabic,
-    );
+    Future.microtask(() async {
+      final settings = await _engagementRepository.getNotificationPreferences();
+      if (mounted) {
+        PushNotificationService.instance.registerForSession(
+          repository: _engagementRepository,
+          session: widget.authSession,
+          context: context,
+          isArabic: _isArabic,
+          settings: settings,
+        );
+      }
+    });
   }
 
   Future<List<RecommendationItem>> _loadRecommendations() async {
@@ -265,10 +271,6 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
-  void _toast(String msg) {
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
-  }
-
   Future<void> _openProfilePage() async {
     final updated = await Navigator.of(context).push<bool>(
       MaterialPageRoute(builder: (_) => ProfilePage(isArabic: _isArabic)),
@@ -358,7 +360,7 @@ class _HomePageState extends State<HomePage> {
 
   Future<void> _openNotification(NotificationItem item) async {
     await NotificationNavigationService.instance.openNotification(
-      context,
+      context: context,
       item: item,
       isArabic: _isArabic,
       onSessionExpired: _handleSessionExpired,

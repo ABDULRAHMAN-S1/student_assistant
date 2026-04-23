@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 
 import '../../domain/models/notification_item.dart';
-import '../utils/format_notification_time.dart';
 import '../utils/format_match_reasons.dart';
+import '../utils/format_notification_time.dart';
 
 class NotificationCard extends StatelessWidget {
   const NotificationCard({
@@ -27,11 +27,11 @@ class NotificationCard extends StatelessWidget {
       isArabic: isArabic,
     );
     final routeLabel = item.metadata?.route?.displayLabel(isArabic: isArabic);
-    final relativeTime = formatNotificationRelativeTime(
+    final relativeTime = formatRelativeNotificationTime(
       item.createdAt,
       isArabic: isArabic,
     );
-    final exactTime = formatNotificationAbsoluteTime(
+    final exactTime = formatExactNotificationTime(
       item.createdAt,
       isArabic: isArabic,
     );

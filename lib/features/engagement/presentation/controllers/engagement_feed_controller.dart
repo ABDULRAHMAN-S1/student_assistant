@@ -1,7 +1,7 @@
 import 'package:flutter/foundation.dart';
 
-import '../../data/repositories/engagement_repository_impl.dart';
 import '../../data/repositories/engagement_repository.dart';
+import '../../data/repositories/engagement_repository_impl.dart';
 import '../../domain/models/engagement_feed.dart';
 
 class EngagementFeedController extends ChangeNotifier {
@@ -126,7 +126,9 @@ class EngagementFeedController extends ChangeNotifier {
       final result = await _repository.markNotificationRead(notificationId);
       final refreshed = (_data ?? previousData).notifications
           .map(
-            (item) => item.id == result.notification.id ? result.notification : item,
+            (item) => item.id == result.notification?.id
+                ? (result.notification ?? item)
+                : item,
           )
           .toList(growable: false);
       _data = (_data ?? previousData).copyWith(
@@ -179,27 +181,15 @@ class EngagementFeedController extends ChangeNotifier {
       try {
         final userId = await repository.currentUserId();
         if (userId == null || userId.isEmpty) {
-          return const EngagementFeed(
-            notifications: [],
-            suggestions: [],
-          );
+          return const EngagementFeed(notifications: [], suggestions: []);
         }
         return await repository.getCachedFeed(userId: userId) ??
-            const EngagementFeed(
-              notifications: [],
-              suggestions: [],
-            );
+            const EngagementFeed(notifications: [], suggestions: []);
       } catch (_) {
-        return const EngagementFeed(
-          notifications: [],
-          suggestions: [],
-        );
+        return const EngagementFeed(notifications: [], suggestions: []);
       }
     }
-    return const EngagementFeed(
-      notifications: [],
-      suggestions: [],
-    );
+    return const EngagementFeed(notifications: [], suggestions: []);
   }
 
   void _captureError(Object error) {

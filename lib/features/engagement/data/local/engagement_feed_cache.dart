@@ -11,6 +11,15 @@ import '../../domain/models/suggestion_item.dart';
 class EngagementFeedCache {
   const EngagementFeedCache();
 
+  static Future<EngagementFeedCache> open() async {
+    await _openBox();
+    return const EngagementFeedCache();
+  }
+
+  static Future<void> ensureInitialized() async {
+    await _openBox();
+  }
+
   static const String boxName = 'engagement_feed';
   static const String _feedPrefix = 'feed:';
   static const String _preferencesPrefix = 'preferences:';
@@ -48,8 +57,9 @@ class EngagementFeedCache {
   }
 
   Future<void> writeFeed(String userId, EngagementFeed feed) {
-    return _openBox()
-        .then((box) => box.put('$_feedPrefix$userId', _encodeFeed(feed)));
+    return _openBox().then(
+      (box) => box.put('$_feedPrefix$userId', _encodeFeed(feed)),
+    );
   }
 
   Future<NotificationPreferences?> readPreferences(String userId) async {
@@ -100,13 +110,18 @@ class EngagementFeedCache {
       notifications: notificationsRaw is List
           ? notificationsRaw
                 .whereType<Map>()
-                .map((item) => _decodeNotification(Map<String, dynamic>.from(item)))
+                .map(
+                  (item) =>
+                      _decodeNotification(Map<String, dynamic>.from(item)),
+                )
                 .toList(growable: false)
           : const [],
       suggestions: suggestionsRaw is List
           ? suggestionsRaw
                 .whereType<Map>()
-                .map((item) => _decodeSuggestion(Map<String, dynamic>.from(item)))
+                .map(
+                  (item) => _decodeSuggestion(Map<String, dynamic>.from(item)),
+                )
                 .toList(growable: false)
           : const [],
       unreadCount: (raw['unreadCount'] as num?)?.toInt() ?? 0,
@@ -116,8 +131,9 @@ class EngagementFeedCache {
             ? Map<String, dynamic>.from(raw['page'] as Map)['hasMore'] == true
             : false,
         nextCursor: raw['page'] is Map
-            ? (Map<String, dynamic>.from(raw['page'] as Map)['nextCursor']
-                  ?.toString())
+            ? (Map<String, dynamic>.from(
+                raw['page'] as Map,
+              )['nextCursor']?.toString())
             : null,
       ),
       cachedAt: _asDateTime(raw['cachedAt']),

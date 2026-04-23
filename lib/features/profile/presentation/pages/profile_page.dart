@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../../engagement/data/remote/engagement_api_client.dart';
 import '../../../engagement/data/repositories/engagement_repository.dart';
 import '../../../engagement/data/repositories/engagement_repository_impl.dart';
+import '../../../engagement/domain/models/notification_category_preference_update.dart';
 import '../../../engagement/domain/models/notification_preferences.dart';
 import '../../data/demo/demo_profile_repository.dart';
 import '../../data/local/profile_store.dart';
@@ -27,8 +28,7 @@ class _ProfilePageState extends State<ProfilePage> {
   final _trackController = TextEditingController();
   final _currentSemesterController = TextEditingController();
   final _courseIdController = TextEditingController();
-  final EngagementRepository _engagementRepository =
-      EngagementRepositoryImpl();
+  final EngagementRepository _engagementRepository = EngagementRepositoryImpl();
 
   bool _isLoading = true;
   bool _isSaving = false;
@@ -169,8 +169,8 @@ class _ProfilePageState extends State<ProfilePage> {
               .map(_normalizeInterest)
               .where((value) => value.isNotEmpty),
         );
-      _notificationPreferences =
-          await _engagementRepository.getNotificationPreferences();
+      _notificationPreferences = await _engagementRepository
+          .getNotificationPreferences();
     } catch (_) {
       // Keep local profile behavior even when backend profile sync fails.
     }
@@ -955,7 +955,9 @@ class _ProfilePageState extends State<ProfilePage> {
                               NotificationCategoryPreferenceUpdate(
                                 category: 'live_event',
                                 enablePush: value,
-                                enableInApp: _categoryInAppEnabled('live_event'),
+                                enableInApp: _categoryInAppEnabled(
+                                  'live_event',
+                                ),
                               ),
                             ],
                           );
@@ -975,14 +977,16 @@ class _ProfilePageState extends State<ProfilePage> {
                               NotificationCategoryPreferenceUpdate(
                                 category: 'live_opportunity',
                                 enablePush: value,
-                                enableInApp:
-                                    _categoryInAppEnabled('live_opportunity'),
+                                enableInApp: _categoryInAppEnabled(
+                                  'live_opportunity',
+                                ),
                               ),
                               NotificationCategoryPreferenceUpdate(
                                 category: 'live_deadline',
                                 enablePush: value,
-                                enableInApp:
-                                    _categoryInAppEnabled('live_deadline'),
+                                enableInApp: _categoryInAppEnabled(
+                                  'live_deadline',
+                                ),
                               ),
                             ],
                           );
