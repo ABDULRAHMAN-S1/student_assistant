@@ -59,9 +59,10 @@ class PushNotificationService {
       onDidReceiveNotificationResponse: (response) {
         final route = _routeFromPayload(response.payload);
         if (route != null && _context != null) {
+          final context = _context!;
           unawaited(
             NotificationNavigationService.instance.handleRoute(
-              _context!,
+              context,
               route,
               isArabic: _isArabic,
             ),
@@ -84,13 +85,15 @@ class PushNotificationService {
           if (repository == null || context == null) {
             return;
           }
+          // ignore: use_build_context_synchronously
+          final locale = Localizations.localeOf(context).languageCode;
           unawaited(
             repository.registerDeviceToken(
               token: token,
               platform: Platform.isIOS ? 'ios' : 'android',
               deviceName: '',
               appVersion: '',
-              locale: Localizations.localeOf(context).languageCode,
+              locale: locale,
             ),
           );
         });
@@ -123,6 +126,8 @@ class PushNotificationService {
     _repository = repository;
     _context = context;
     _isArabic = isArabic;
+    // ignore: use_build_context_synchronously
+    final locale = Localizations.localeOf(context).languageCode;
     if (session == null) {
       await unregisterCurrentDevice(repository: repository);
       return;
@@ -152,7 +157,7 @@ class PushNotificationService {
         platform: Platform.isIOS ? 'ios' : 'android',
         deviceName: '',
         appVersion: '',
-        locale: Localizations.localeOf(context).languageCode,
+        locale: locale,
       );
       _registeredToken = token;
     } catch (_) {
