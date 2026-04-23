@@ -1,0 +1,14 @@
+{
+  "source_rows": "D:\\student_assistant\\backend\\data\\processed\\faq_ref_natural_v2_tfidf.csv",
+  "embedding_model": "paraphrase-multilingual-MiniLM-L12-v2",
+  "n": 58,
+  "mean_cosine_tfidf": 62.72,
+  "mean_overall_quality": 4.54,
+  "count_high_cosine_low_quality": 0,
+  "count_low_cosine_high_quality": 6,
+  "top_3_system_issues": [
+    "تداخل: تشابه نصي منخفض لكن تقدير دلالي/شكلي أوفر؛ راجع الاعتماد على Cosine وحدفه",
+    "اعتماد التضمين لمعنى الصحة يلزم الاستكمال بعينة بشرية للإنتاج",
+    "تكرار بادئات/صيغ قد يرفع الضوضاء دون مضمون إضافي"
+  ]
+}

@@ -1,0 +1,62 @@
+{
+  "reference_file": "D:\\student_assistant\\backend\\data\\raw\\faq.txt",
+  "generator": "app.chat.answer_question (ChatService, same as /chat)",
+  "total_questions": 58,
+  "evaluated": 47,
+  "excluded": 11,
+  "mean_cosine_pct": 34.99,
+  "top_5": [
+    {
+      "question_id": 26,
+      "question": "ما هي التصنيفات العالمية التي دخلتها جامعة طيبة؟",
+      "cosine_pct": 80.63
+    },
+    {
+      "question_id": 50,
+      "question": "كيف يعرف الطالب نتيجة القبول؟",
+      "cosine_pct": 78.14
+    },
+    {
+      "question_id": 8,
+      "question": "كيف أطلب جهاز كمبيوتر؟",
+      "cosine_pct": 74.78
+    },
+    {
+      "question_id": 2,
+      "question": "كيف أقوم بطلب بنر (سلايدر) رئيسي متحرك على موقع الجامعة؟",
+      "cosine_pct": 73.04
+    },
+    {
+      "question_id": 52,
+      "question": "طالب تأخر في ترتيب الرغبات في الموعد المحدد؟",
+      "cosine_pct": 69.92
+    }
+  ],
+  "bottom_5": [
+    {
+      "question_id": 18,
+      "question": "ماهي متطلبات الحصول على المكافأة الشهرية؟",
+      "cosine_pct": 0.0
+    },
+    {
+      "question_id": 30,
+      "question": "هل من الممكن التعديل على بيانات الطالب عند الخطأ في رقم الجوال في المنح الداخلية والخارجية؟",
+      "cosine_pct": 0.0
+    },
+    {
+      "question_id": 31,
+      "question": "هل من الممكن تحديد موعد قبول المنح (الخارجية - الداخلية)؟",
+      "cosine_pct": 0.0
+    },
+    {
+      "question_id": 34,
+      "question": "هل يتم احتساب درجات المقررات التي درستها بنظام الزيارة في جامعة أخرى ضمن المعدل التراكمي؟",
+      "cosine_pct": 0.0
+    },
+    {
+      "question_id": 35,
+      "question": "هل يستطيع الطالب المنذر أكاديمياً الدراسة على نظام الزيارة؟",
+      "cosine_pct": 0.0
+    }
+  ]
+}

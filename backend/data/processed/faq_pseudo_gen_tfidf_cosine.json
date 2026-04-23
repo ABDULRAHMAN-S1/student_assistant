@@ -1,0 +1,62 @@
+{
+  "source": "D:\\student_assistant\\backend\\data\\raw\\faq.txt",
+  "pairs_total": 58,
+  "excluded_tiny_answers": 6,
+  "evaluated_count": 52,
+  "mean_cosine_pct": 61.01,
+  "top_5": [
+    {
+      "question_id": 4,
+      "question": "أريد إضافة (الصفر) إلى التحويلة؟",
+      "cosine_pct": 91.9
+    },
+    {
+      "question_id": 14,
+      "question": "هل يصرف لطلبة ذوي الإعاقة مكافأة؟",
+      "cosine_pct": 79.17
+    },
+    {
+      "question_id": 2,
+      "question": "كيف أقوم بطلب بنر (سلايدر) رئيسي متحرك على موقع الجامعة؟",
+      "cosine_pct": 75.73
+    },
+    {
+      "question_id": 48,
+      "question": "هل يوجد تحويل من الكليات العلمية إلى الكليات الصحية؟",
+      "cosine_pct": 73.41
+    },
+    {
+      "question_id": 46,
+      "question": "هل يمكن التحويل من الكليات النظرية إلى الكليات العلمية؟",
+      "cosine_pct": 72.69
+    }
+  ],
+  "bottom_5": [
+    {
+      "question_id": 19,
+      "question": "ماهي إجراءات القبول في السكن الجامعي؟",
+      "cosine_pct": 9.06
+    },
+    {
+      "question_id": 25,
+      "question": "ماهي شروط القبول بالسكن الداخلي؟",
+      "cosine_pct": 11.43
+    },
+    {
+      "question_id": 34,
+      "question": "هل يتم احتساب درجات المقررات التي درستها بنظام الزيارة في جامعة أخرى ضمن المعدل التراكمي؟",
+      "cosine_pct": 12.54
+    },
+    {
+      "question_id": 10,
+      "question": "ماهي آلية وشروط الاستفادة من القروض الطلابية؟",
+      "cosine_pct": 38.4
+    },
+    {
+      "question_id": 54,
+      "question": "ماهي آلية المفاضلة في القبول؟",
+      "cosine_pct": 54.92
+    }
+  ],
+  "pseudo_reference_note": "Pseudo-reference مولّد آلياً من شطر/ملخص إجابة faq.txt وليس مرجعاً بشرياً معتمداً"
+}
