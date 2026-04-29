@@ -142,18 +142,12 @@ class _HomePageState extends State<HomePage> {
       }
     });
     controller.loadInitial();
-    Future.microtask(() async {
-      final settings = await _engagementRepository.getNotificationPreferences();
-      if (mounted) {
-        PushNotificationService.instance.registerForSession(
-          repository: _engagementRepository,
-          session: widget.authSession,
-          context: context,
-          isArabic: _isArabic,
-          settings: settings,
-        );
-      }
-    });
+    PushNotificationService.instance.registerForSession(
+      repository: _engagementRepository,
+      session: widget.authSession,
+      context: context,
+      isArabic: _isArabic,
+    );
   }
 
   Future<List<RecommendationItem>> _loadRecommendations() async {
