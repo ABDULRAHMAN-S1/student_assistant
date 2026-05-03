@@ -1,8 +1,7 @@
 import 'package:hive_flutter/hive_flutter.dart';
-import 'package:path_provider/path_provider.dart';
 
 import '../features/auth/domain/models/auth_session.dart';
-import 'local_encryption_key_provider.dart';
+import 'app_hive.dart';
 
 class AppSettingsStore {
   AppSettingsStore._(this._box);
@@ -22,54 +21,14 @@ class AppSettingsStore {
 
   static Future<AppSettingsStore> open() async {
     if (!Hive.isBoxOpen(boxName)) {
-      await _openEncryptedBox(boxName);
+      await AppHive.openBox(boxName);
     }
     return AppSettingsStore._(Hive.box(boxName));
   }
 
   static Future<void> ensureInitialized() async {
-    final appSupportDirectory = await getApplicationSupportDirectory();
-    await appSupportDirectory.create(recursive: true);
-    Hive.init(appSupportDirectory.path);
-    await LocalEncryptionKeyProvider.instance.getKey();
+    await AppHive.ensureInitialized();
     await open();
-  }
-
-  static Future<void> _openEncryptedBox(String name) async {
-    final encryptionKey = await LocalEncryptionKeyProvider.instance.getKey();
-    try {
-      await Hive.openBox(name, encryptionCipher: HiveAesCipher(encryptionKey));
-    } catch (error) {
-      if (_isFileLockError(error)) {
-        rethrow;
-      }
-      // Do NOT wipe user data on ambiguous open failures.
-      // Only wipe when corruption is strongly indicated.
-      if (_looksLikeCorruptionError(error)) {
-        await Hive.deleteBoxFromDisk(name);
-        await Hive.openBox(name, encryptionCipher: HiveAesCipher(encryptionKey));
-        return;
-      }
-      rethrow;
-    }
-  }
-
-  static bool _isFileLockError(Object error) {
-    final message = error.toString().toLowerCase();
-    return message.contains('lock failed') ||
-        message.contains('being used by another process') ||
-        message.contains('cannot delete file');
-  }
-
-  static bool _looksLikeCorruptionError(Object error) {
-    final message = error.toString().toLowerCase();
-    // Hive can report "wrong key or corrupted box". Treat "wrong key" as NOT confirmed corruption.
-    if (message.contains('wrong key')) return false;
-    return message.contains('corrupt') ||
-        message.contains('crc') ||
-        message.contains('invalid header') ||
-        message.contains('cannot be decoded') ||
-        message.contains('bad state');
   }
 
   String readLanguageCode() {

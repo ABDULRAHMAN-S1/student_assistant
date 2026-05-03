@@ -13,10 +13,111 @@ from app.security import hash_value, utc_now
 
 DEFAULT_USER_ROLE = "student"
 ADMIN_ROLE = "admin"
+ADMIN_ACCESS_PERMISSION = "admin.access"
+ADMIN_SUMMARY_PERMISSION = "admin.summary.read"
+USERS_READ_PERMISSION = "users.read"
+USERS_MANAGE_PERMISSION = "users.manage"
+ROLES_READ_PERMISSION = "roles.read"
+ROLES_MANAGE_PERMISSION = "roles.manage"
+ACTIVITY_READ_PERMISSION = "activity.read"
+ENGAGEMENT_MANAGE_PERMISSION = "engagement.manage"
+
+DEFAULT_ROLE_PERMISSIONS: dict[str, tuple[str, ...]] = {
+    DEFAULT_USER_ROLE: (),
+    ADMIN_ROLE: (
+        ADMIN_ACCESS_PERMISSION,
+        ADMIN_SUMMARY_PERMISSION,
+        USERS_READ_PERMISSION,
+        USERS_MANAGE_PERMISSION,
+        ROLES_READ_PERMISSION,
+        ROLES_MANAGE_PERMISSION,
+        ACTIVITY_READ_PERMISSION,
+        ENGAGEMENT_MANAGE_PERMISSION,
+    ),
+}
+
+KNOWN_PERMISSION_DEFINITIONS: dict[str, dict[str, str]] = {
+    ADMIN_ACCESS_PERMISSION: {
+        "label": "Admin access",
+        "description": "Access administrative endpoints and dashboard views.",
+    },
+    ADMIN_SUMMARY_PERMISSION: {
+        "label": "Admin summary",
+        "description": "Read administrative summary and platform metrics.",
+    },
+    USERS_READ_PERMISSION: {
+        "label": "Read users",
+        "description": "View users, their roles, and effective permissions.",
+    },
+    USERS_MANAGE_PERMISSION: {
+        "label": "Manage users",
+        "description": "Change user role, activation state, and permission overrides.",
+    },
+    ROLES_READ_PERMISSION: {
+        "label": "Read roles",
+        "description": "View system and custom roles with their permissions.",
+    },
+    ROLES_MANAGE_PERMISSION: {
+        "label": "Manage roles",
+        "description": "Create and update roles and their permission sets.",
+    },
+    ACTIVITY_READ_PERMISSION: {
+        "label": "Read activity log",
+        "description": "Browse recent authentication and administrative activity.",
+    },
+    ENGAGEMENT_MANAGE_PERMISSION: {
+        "label": "Manage engagement",
+        "description": "Create engagement content for student notifications.",
+    },
+}
 
 
 def _timestamp() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _decode_json_list(raw_value: str | None) -> list[str]:
+    try:
+        payload = json.loads(raw_value or "[]")
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(payload, list):
+        return []
+    items: list[str] = []
+    for item in payload:
+        text = str(item or "").strip()
+        if text:
+            items.append(text)
+    return items
+
+
+def _encode_json_list(items: list[str] | tuple[str, ...]) -> str:
+    return json.dumps(sorted({str(item).strip() for item in items if str(item).strip()}), ensure_ascii=False)
+
+
+def _seed_default_roles(connection: sqlite3.Connection) -> None:
+    now = _timestamp()
+    for role_name, permissions in DEFAULT_ROLE_PERMISSIONS.items():
+        connection.execute(
+            """
+            INSERT INTO roles (name, display_name, description, permissions_json, is_system, created_at, updated_at)
+            VALUES (?, ?, ?, ?, 1, ?, ?)
+            ON CONFLICT(name) DO UPDATE SET
+                display_name = excluded.display_name,
+                description = excluded.description,
+                permissions_json = excluded.permissions_json,
+                is_system = 1,
+                updated_at = excluded.updated_at
+            """,
+            (
+                role_name,
+                role_name.replace("_", " ").title(),
+                "System role",
+                _encode_json_list(permissions),
+                now,
+                now,
+            ),
+        )
 
 
 def get_connection() -> sqlite3.Connection:
@@ -164,6 +265,43 @@ def init_database() -> None:
 
             CREATE INDEX IF NOT EXISTS idx_notification_device_tokens_user_active
             ON notification_device_tokens(user_id, invalidated_at, updated_at DESC);
+
+            CREATE TABLE IF NOT EXISTS roles (
+                name TEXT PRIMARY KEY,
+                display_name TEXT NOT NULL,
+                description TEXT NOT NULL DEFAULT '',
+                permissions_json TEXT NOT NULL DEFAULT '[]',
+                is_system INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS user_permission_overrides (
+                user_id TEXT PRIMARY KEY,
+                granted_permissions_json TEXT NOT NULL DEFAULT '[]',
+                revoked_permissions_json TEXT NOT NULL DEFAULT '[]',
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS activity_logs (
+                id TEXT PRIMARY KEY,
+                actor_user_id TEXT,
+                target_user_id TEXT,
+                action TEXT NOT NULL,
+                entity_type TEXT NOT NULL,
+                entity_id TEXT NOT NULL DEFAULT '',
+                metadata_json TEXT NOT NULL DEFAULT '{}',
+                created_at TEXT NOT NULL,
+                FOREIGN KEY(actor_user_id) REFERENCES users(id) ON DELETE SET NULL,
+                FOREIGN KEY(target_user_id) REFERENCES users(id) ON DELETE SET NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_activity_logs_created_at
+            ON activity_logs(created_at DESC, id DESC);
+
+            CREATE INDEX IF NOT EXISTS idx_activity_logs_target_user
+            ON activity_logs(target_user_id, created_at DESC, id DESC);
             """
         )
         user_columns = {
@@ -209,6 +347,8 @@ def init_database() -> None:
             if col not in notification_columns:
                 connection.execute(f"ALTER TABLE notifications ADD COLUMN {col} {definition}")
 
+        _seed_default_roles(connection)
+
 
 def fetch_user_by_email(email: str) -> dict[str, Any] | None:
     with connection_scope() as connection:
@@ -234,6 +374,331 @@ def list_users() -> list[dict[str, Any]]:
             "SELECT * FROM users ORDER BY created_at ASC, email ASC",
         ).fetchall()
     return [dict(row) for row in rows]
+
+
+def list_role_names() -> list[str]:
+    with connection_scope() as connection:
+        rows = connection.execute(
+            "SELECT name FROM roles ORDER BY name ASC",
+        ).fetchall()
+    return [str(row["name"]) for row in rows]
+
+
+def fetch_role(role_name: str) -> dict[str, Any] | None:
+    normalized_role = (role_name or "").strip().lower()
+    if not normalized_role:
+        return None
+    with connection_scope() as connection:
+        row = connection.execute(
+            """
+            SELECT
+                roles.*,
+                COUNT(users.id) AS user_count
+            FROM roles
+            LEFT JOIN users ON users.role = roles.name
+            WHERE roles.name = ?
+            GROUP BY roles.name, roles.display_name, roles.description,
+                     roles.permissions_json, roles.is_system, roles.created_at, roles.updated_at
+            LIMIT 1
+            """,
+            (normalized_role,),
+        ).fetchone()
+    if row is None:
+        return None
+    payload = dict(row)
+    payload["permissions"] = _decode_json_list(payload.pop("permissions_json", "[]"))
+    payload["is_system"] = bool(payload.get("is_system"))
+    payload["user_count"] = int(payload.get("user_count") or 0)
+    return payload
+
+
+def list_roles() -> list[dict[str, Any]]:
+    with connection_scope() as connection:
+        rows = connection.execute(
+            """
+            SELECT
+                roles.*,
+                COUNT(users.id) AS user_count
+            FROM roles
+            LEFT JOIN users ON users.role = roles.name
+            GROUP BY roles.name, roles.display_name, roles.description,
+                     roles.permissions_json, roles.is_system, roles.created_at, roles.updated_at
+            ORDER BY roles.is_system DESC, roles.name ASC
+            """
+        ).fetchall()
+    roles: list[dict[str, Any]] = []
+    for row in rows:
+        payload = dict(row)
+        payload["permissions"] = _decode_json_list(payload.pop("permissions_json", "[]"))
+        payload["is_system"] = bool(payload.get("is_system"))
+        payload["user_count"] = int(payload.get("user_count") or 0)
+        roles.append(payload)
+    return roles
+
+
+def upsert_role(
+    *,
+    role_name: str,
+    display_name: str,
+    description: str,
+    permissions: list[str],
+    is_system: bool = False,
+) -> dict[str, Any]:
+    now = _timestamp()
+    normalized_role = (role_name or "").strip().lower()
+    with connection_scope() as connection:
+        connection.execute(
+            """
+            INSERT INTO roles (name, display_name, description, permissions_json, is_system, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(name) DO UPDATE SET
+                display_name = excluded.display_name,
+                description = excluded.description,
+                permissions_json = excluded.permissions_json,
+                is_system = excluded.is_system,
+                updated_at = excluded.updated_at
+            """,
+            (
+                normalized_role,
+                display_name,
+                description,
+                _encode_json_list(permissions),
+                1 if is_system else 0,
+                now,
+                now,
+            ),
+        )
+    role = fetch_role(normalized_role)
+    if role is None:
+        raise RuntimeError("Failed to persist role.")
+    return role
+
+
+def fetch_user_permission_overrides(user_id: str) -> dict[str, Any]:
+    with connection_scope() as connection:
+        row = connection.execute(
+            """
+            SELECT user_id, granted_permissions_json, revoked_permissions_json, updated_at
+            FROM user_permission_overrides
+            WHERE user_id = ?
+            LIMIT 1
+            """,
+            (user_id,),
+        ).fetchone()
+    if row is None:
+        return {
+            "user_id": user_id,
+            "granted_permissions": [],
+            "revoked_permissions": [],
+            "updated_at": None,
+        }
+    payload = dict(row)
+    return {
+        "user_id": payload["user_id"],
+        "granted_permissions": _decode_json_list(payload.get("granted_permissions_json")),
+        "revoked_permissions": _decode_json_list(payload.get("revoked_permissions_json")),
+        "updated_at": payload.get("updated_at"),
+    }
+
+
+def upsert_user_permission_overrides(
+    *,
+    user_id: str,
+    granted_permissions: list[str],
+    revoked_permissions: list[str],
+) -> dict[str, Any]:
+    now = _timestamp()
+    with connection_scope() as connection:
+        connection.execute(
+            """
+            INSERT INTO user_permission_overrides (
+                user_id, granted_permissions_json, revoked_permissions_json, updated_at
+            )
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(user_id) DO UPDATE SET
+                granted_permissions_json = excluded.granted_permissions_json,
+                revoked_permissions_json = excluded.revoked_permissions_json,
+                updated_at = excluded.updated_at
+            """,
+            (
+                user_id,
+                _encode_json_list(granted_permissions),
+                _encode_json_list(revoked_permissions),
+                now,
+            ),
+        )
+    return fetch_user_permission_overrides(user_id)
+
+
+def resolve_user_permissions(*, user_id: str, role_name: str | None = None) -> list[str]:
+    normalized_role = (role_name or "").strip().lower()
+    if not normalized_role:
+        user = fetch_user_by_id(user_id)
+        normalized_role = str((user or {}).get("role") or DEFAULT_USER_ROLE).strip().lower()
+    role = fetch_role(normalized_role)
+    role_permissions = set(role.get("permissions", [])) if role else set(DEFAULT_ROLE_PERMISSIONS.get(DEFAULT_USER_ROLE, ()))
+    overrides = fetch_user_permission_overrides(user_id)
+    granted = set(overrides.get("granted_permissions", []))
+    revoked = set(overrides.get("revoked_permissions", []))
+    return sorted((role_permissions | granted) - revoked)
+
+
+def _serialize_admin_user(row: sqlite3.Row | dict[str, Any]) -> dict[str, Any]:
+    payload = dict(row)
+    overrides = fetch_user_permission_overrides(str(payload["id"]))
+    role_name = str(payload.get("role") or DEFAULT_USER_ROLE).strip().lower()
+    return {
+        "id": str(payload["id"]),
+        "email": str(payload["email"]),
+        "full_name": str(payload["full_name"]),
+        "role": role_name,
+        "is_active": bool(payload.get("is_active", 1)),
+        "created_at": payload.get("created_at"),
+        "updated_at": payload.get("updated_at"),
+        "last_login_at": payload.get("last_login_at"),
+        "permissions": resolve_user_permissions(user_id=str(payload["id"]), role_name=role_name),
+        "granted_permissions": list(overrides.get("granted_permissions", [])),
+        "revoked_permissions": list(overrides.get("revoked_permissions", [])),
+    }
+
+
+def list_admin_users() -> list[dict[str, Any]]:
+    with connection_scope() as connection:
+        rows = connection.execute(
+            "SELECT * FROM users ORDER BY created_at ASC, email ASC",
+        ).fetchall()
+    return [_serialize_admin_user(row) for row in rows]
+
+
+def fetch_admin_user(user_id: str) -> dict[str, Any] | None:
+    with connection_scope() as connection:
+        row = connection.execute(
+            "SELECT * FROM users WHERE id = ? LIMIT 1",
+            (user_id,),
+        ).fetchone()
+    return _serialize_admin_user(row) if row else None
+
+
+def insert_activity_log(
+    *,
+    log_id: str,
+    action: str,
+    entity_type: str,
+    entity_id: str = "",
+    actor_user_id: str | None = None,
+    target_user_id: str | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    created_at = _timestamp()
+    with connection_scope() as connection:
+        connection.execute(
+            """
+            INSERT INTO activity_logs (
+                id, actor_user_id, target_user_id, action, entity_type, entity_id, metadata_json, created_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                log_id,
+                actor_user_id,
+                target_user_id,
+                action,
+                entity_type,
+                entity_id,
+                json.dumps(metadata or {}, ensure_ascii=False),
+                created_at,
+            ),
+        )
+    return {
+        "id": log_id,
+        "actor_user_id": actor_user_id,
+        "target_user_id": target_user_id,
+        "action": action,
+        "entity_type": entity_type,
+        "entity_id": entity_id,
+        "metadata": metadata or {},
+        "created_at": created_at,
+    }
+
+
+def list_activity_logs(
+    *,
+    limit: int = 50,
+    actor_user_id: str | None = None,
+    target_user_id: str | None = None,
+    action: str | None = None,
+    entity_type: str | None = None,
+) -> list[dict[str, Any]]:
+    query = """
+        SELECT id, actor_user_id, target_user_id, action, entity_type, entity_id, metadata_json, created_at
+        FROM activity_logs
+        WHERE 1 = 1
+    """
+    params: list[Any] = []
+    if actor_user_id:
+        query += " AND actor_user_id = ?"
+        params.append(actor_user_id)
+    if target_user_id:
+        query += " AND target_user_id = ?"
+        params.append(target_user_id)
+    if action:
+        query += " AND action = ?"
+        params.append(action)
+    if entity_type:
+        query += " AND entity_type = ?"
+        params.append(entity_type)
+    query += " ORDER BY created_at DESC, id DESC LIMIT ?"
+    params.append(limit)
+
+    with connection_scope() as connection:
+        rows = connection.execute(query, tuple(params)).fetchall()
+    items: list[dict[str, Any]] = []
+    for row in rows:
+        payload = dict(row)
+        payload["metadata"] = json.loads(payload.pop("metadata_json") or "{}")
+        items.append(payload)
+    return items
+
+
+def get_admin_dashboard_summary() -> dict[str, int]:
+    with connection_scope() as connection:
+        user_counts = connection.execute(
+            """
+            SELECT
+                COUNT(*) AS total_users,
+                SUM(CASE WHEN is_active = 1 THEN 1 ELSE 0 END) AS active_users,
+                SUM(CASE WHEN role = ? THEN 1 ELSE 0 END) AS admin_users,
+                SUM(CASE WHEN role = ? THEN 1 ELSE 0 END) AS student_users
+            FROM users
+            """,
+            (ADMIN_ROLE, DEFAULT_USER_ROLE),
+        ).fetchone()
+
+        def scalar(query: str, params: tuple[object, ...] = ()) -> int:
+            row = connection.execute(query, params).fetchone()
+            if row is None:
+                return 0
+            value = row[0]
+            return int(value or 0)
+
+        return {
+            "total_users": int((user_counts["total_users"] if user_counts else 0) or 0),
+            "active_users": int((user_counts["active_users"] if user_counts else 0) or 0),
+            "admin_users": int((user_counts["admin_users"] if user_counts else 0) or 0),
+            "student_users": int((user_counts["student_users"] if user_counts else 0) or 0),
+            "roles": scalar("SELECT COUNT(*) FROM roles"),
+            "activity_logs": scalar("SELECT COUNT(*) FROM activity_logs"),
+            "feedback_events": scalar("SELECT COUNT(*) FROM feedback_events"),
+            "student_profiles": scalar("SELECT COUNT(*) FROM student_profiles"),
+            "live_content_items": scalar("SELECT COUNT(*) FROM live_content_items"),
+            "notifications": scalar("SELECT COUNT(*) FROM notifications"),
+            "unread_notifications": scalar("SELECT COUNT(*) FROM notifications WHERE is_read = 0"),
+            "notification_preferences": scalar("SELECT COUNT(*) FROM notification_preferences"),
+            "active_device_tokens": scalar(
+                "SELECT COUNT(*) FROM notification_device_tokens WHERE invalidated_at IS NULL"
+            ),
+            "refresh_tokens": scalar("SELECT COUNT(*) FROM refresh_tokens WHERE revoked_at IS NULL"),
+        }
 
 
 def insert_user(
@@ -266,11 +731,33 @@ def update_user_last_login(user_id: str) -> None:
 
 
 def update_user_role(*, user_id: str, role: str) -> dict[str, Any] | None:
+    return update_user_admin_fields(user_id=user_id, role=role)
+
+
+def update_user_admin_fields(
+    *,
+    user_id: str,
+    role: str | None = None,
+    is_active: bool | None = None,
+) -> dict[str, Any] | None:
+    assignments: list[str] = []
+    params: list[Any] = []
     now = _timestamp()
+    if role is not None:
+        assignments.append("role = ?")
+        params.append(role)
+    if is_active is not None:
+        assignments.append("is_active = ?")
+        params.append(1 if is_active else 0)
+    if not assignments:
+        return fetch_user_by_id(user_id)
+    assignments.append("updated_at = ?")
+    params.append(now)
+    params.append(user_id)
     with connection_scope() as connection:
         connection.execute(
-            "UPDATE users SET role = ?, updated_at = ? WHERE id = ?",
-            (role, now, user_id),
+            f"UPDATE users SET {', '.join(assignments)} WHERE id = ?",
+            tuple(params),
         )
         row = connection.execute(
             "SELECT * FROM users WHERE id = ? LIMIT 1",

@@ -16,6 +16,7 @@ LOCAL_DEV_ORIGINS = (
     "http://127.0.0.1:5000",
     "http://127.0.0.1:8000",
 )
+LOCAL_DEV_ORIGIN_REGEX = r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$"
 
 
 def _read_bool(name: str, default: bool = False) -> bool:
@@ -49,6 +50,7 @@ class Settings:
     db_path: Path
     log_level: str
     cors_origins: tuple[str, ...]
+    cors_origin_regex: str | None
     jwt_secret: str
     access_token_ttl_seconds: int
     refresh_token_ttl_seconds: int
@@ -74,6 +76,7 @@ def get_settings() -> Settings:
     app_env = os.getenv("APP_ENV", "development").strip().lower() or "development"
     configured_origins = _read_list("CORS_ORIGINS")
     cors_origins = configured_origins or (() if app_env == "production" else LOCAL_DEV_ORIGINS)
+    cors_origin_regex = None if configured_origins or app_env == "production" else LOCAL_DEV_ORIGIN_REGEX
 
     db_path = Path(os.getenv("APP_DB_PATH", str(DATA_DIR / "app.db"))).resolve()
     db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -102,6 +105,7 @@ def get_settings() -> Settings:
         db_path=db_path,
         log_level=os.getenv("LOG_LEVEL", "INFO").upper(),
         cors_origins=cors_origins,
+        cors_origin_regex=cors_origin_regex,
         jwt_secret=jwt_secret,
         access_token_ttl_seconds=_read_int("ACCESS_TOKEN_TTL_SECONDS", 900),
         refresh_token_ttl_seconds=_read_int("REFRESH_TOKEN_TTL_SECONDS", 604800),

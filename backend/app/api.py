@@ -6,10 +6,34 @@ from uuid import uuid4
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
 try:
-    from app.auth_service import AuthenticatedUser, authenticate_user, list_users, refresh_session, register_user, require_authenticated_user, require_role, update_user_role
+    from app.admin_dashboard import render_admin_dashboard, render_admin_login
+    from app.admin_service import (
+        create_admin_user,
+        create_role,
+        get_activity_logs,
+        get_admin_user,
+        get_dashboard_summary,
+        get_permission_catalog,
+        list_admin_users,
+        list_roles,
+        update_admin_user,
+        update_role,
+        update_user_permissions,
+    )
+    from app.auth_service import (
+        AuthenticatedUser,
+        authenticate_user,
+        list_users,
+        refresh_session,
+        register_user,
+        require_admin_access_token,
+        require_admin_permission,
+        require_authenticated_user,
+        require_permission,
+    )
     from app.config import get_settings
     from app.database import init_database, insert_feedback
     from app.engagement_service import (
@@ -27,6 +51,10 @@ try:
     from app.logging_utils import configure_logging
     from app.rate_limit import RateLimiter
     from app.schemas import (
+        ActivityLogResponse,
+        AdminUserCreateRequest,
+        AdminUserResponse,
+        AdminUserUpdateRequest,
         ChatRequest,
         DeviceTokenEnvelopeResponse,
         DeviceTokenRegisterRequest,
@@ -37,16 +65,23 @@ try:
         NotificationPreferencesResponse,
         NotificationPreferencesUpdateRequest,
         NotificationReadResponse,
+        PermissionDefinitionResponse,
         RefreshRequest,
         RegisterRequest,
+        RoleCreateRequest,
+        RoleResponse,
+        RoleUpdateRequest,
         SearchRequest,
         StudentProfileUpdateRequest,
         TranslateRequest,
         UpdateUserRoleRequest,
+        UserPermissionOverrideUpdateRequest,
     )
     from app.translation_service import TranslationUnavailable, translate_text
 except ImportError:
-    from auth_service import AuthenticatedUser, authenticate_user, list_users, refresh_session, register_user, require_authenticated_user, require_role, update_user_role  # type: ignore
+    from admin_dashboard import render_admin_dashboard, render_admin_login  # type: ignore
+    from admin_service import create_admin_user, create_role, get_activity_logs, get_admin_user, get_dashboard_summary, get_permission_catalog, list_admin_users, list_roles, update_admin_user, update_role, update_user_permissions  # type: ignore
+    from auth_service import AuthenticatedUser, authenticate_user, list_users, refresh_session, register_user, require_admin_access_token, require_admin_permission, require_authenticated_user, require_permission  # type: ignore
     from config import get_settings  # type: ignore
     from database import init_database, insert_feedback  # type: ignore
     from engagement_service import (  # type: ignore
@@ -64,6 +99,10 @@ except ImportError:
     from logging_utils import configure_logging  # type: ignore
     from rate_limit import RateLimiter  # type: ignore
     from schemas import (  # type: ignore
+        ActivityLogResponse,
+        AdminUserCreateRequest,
+        AdminUserResponse,
+        AdminUserUpdateRequest,
         ChatRequest,
         DeviceTokenEnvelopeResponse,
         DeviceTokenRegisterRequest,
@@ -74,12 +113,17 @@ except ImportError:
         NotificationPreferencesResponse,
         NotificationPreferencesUpdateRequest,
         NotificationReadResponse,
+        PermissionDefinitionResponse,
         RefreshRequest,
         RegisterRequest,
+        RoleCreateRequest,
+        RoleResponse,
+        RoleUpdateRequest,
         SearchRequest,
         StudentProfileUpdateRequest,
         TranslateRequest,
         UpdateUserRoleRequest,
+        UserPermissionOverrideUpdateRequest,
     )
     from translation_service import TranslationUnavailable, translate_text  # type: ignore
 
@@ -101,6 +145,12 @@ RATE_LIMIT_RULES = {
     "/public/health": (60, 60),
     "/health": (20, 60),
     "/users": (20, 60),
+    "/admin/summary": (20, 60),
+    "/admin/dashboard": (20, 60),
+    "/admin/users": (20, 60),
+    "/admin/roles": (20, 60),
+    "/admin/permissions": (20, 60),
+    "/admin/activity-logs": (20, 60),
     "/engagement/profile": (30, 60),
     "/engagement/feed": (20, 60),
     "/engagement/content": (20, 60),
@@ -123,6 +173,7 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=list(settings.cors_origins),
+    allow_origin_regex=settings.cors_origin_regex,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type", "Accept", "X-Request-ID"],
@@ -177,12 +228,13 @@ def client_identity(request: Request, user: AuthenticatedUser | None = None) -> 
     return "unknown"
 
 
-def serialize_current_user(current_user: AuthenticatedUser) -> dict[str, str]:
+def serialize_current_user(current_user: AuthenticatedUser) -> dict[str, object]:
     return {
         "id": current_user.user_id,
         "email": current_user.email,
         "full_name": current_user.full_name,
         "role": current_user.role,
+        "permissions": list(current_user.permissions),
     }
 
 
@@ -193,6 +245,12 @@ def enforce_rate_limit(request: Request, *, user: AuthenticatedUser | None = Non
         rule = RATE_LIMIT_RULES.get("/engagement/notifications/read")
     if rule is None and path.startswith("/engagement/device-tokens/"):
         rule = RATE_LIMIT_RULES.get("/engagement/device-tokens")
+    if rule is None and path.startswith("/admin/users/"):
+        rule = RATE_LIMIT_RULES.get("/admin/users")
+    if rule is None and path.startswith("/admin/roles/"):
+        rule = RATE_LIMIT_RULES.get("/admin/roles")
+    if rule is None and path.startswith("/users/") and path.endswith("/role"):
+        rule = RATE_LIMIT_RULES.get("/users")
     if not rule:
         return
     limit, window_seconds = rule
@@ -325,7 +383,7 @@ def put_profile(
 def post_live_content(
     http_request: Request,
     request: LiveContentCreateRequest,
-    current_user: AuthenticatedUser = Depends(require_role(["admin"])),
+    current_user: AuthenticatedUser = Depends(require_permission("engagement.manage")),
 ) -> dict[str, object]:
     enforce_rate_limit(http_request, user=current_user)
     item = create_live_content(
@@ -463,7 +521,7 @@ def patch_notification_read(
 @app.get("/admin")
 def admin_only(
     http_request: Request,
-    current_user: AuthenticatedUser = Depends(require_role(["admin"])),
+    current_user: AuthenticatedUser = Depends(require_admin_permission("admin.access")),
 ) -> dict[str, object]:
     enforce_rate_limit(http_request, user=current_user)
     return {
@@ -472,10 +530,269 @@ def admin_only(
     }
 
 
+@app.get("/admin/summary")
+def admin_summary(
+    http_request: Request,
+    current_user: AuthenticatedUser = Depends(require_admin_permission("admin.summary.read")),
+) -> dict[str, object]:
+    enforce_rate_limit(http_request, user=current_user)
+    return {
+        "summary": get_dashboard_summary(),
+        "user": serialize_current_user(current_user),
+    }
+
+
+@app.get("/admin/permissions")
+def admin_permissions(
+    http_request: Request,
+    current_user: AuthenticatedUser = Depends(require_admin_permission("roles.read")),
+) -> dict[str, object]:
+    enforce_rate_limit(http_request, user=current_user)
+    permissions = [
+        PermissionDefinitionResponse.model_validate(item).model_dump()
+        for item in get_permission_catalog()
+    ]
+    return {
+        "permissions": permissions,
+        "user": serialize_current_user(current_user),
+    }
+
+
+@app.get("/admin/roles")
+def admin_roles_list(
+    http_request: Request,
+    current_user: AuthenticatedUser = Depends(require_admin_permission("roles.read")),
+) -> dict[str, object]:
+    enforce_rate_limit(http_request, user=current_user)
+    roles = [RoleResponse.model_validate(item).model_dump() for item in list_roles()]
+    return {
+        "roles": roles,
+        "user": serialize_current_user(current_user),
+    }
+
+
+@app.post("/admin/roles")
+def admin_roles_create(
+    http_request: Request,
+    request: RoleCreateRequest,
+    current_user: AuthenticatedUser = Depends(require_admin_permission("roles.manage")),
+) -> dict[str, object]:
+    enforce_rate_limit(http_request, user=current_user)
+    role = create_role(
+        actor_user_id=current_user.user_id,
+        role_name=request.name,
+        display_name=request.display_name,
+        description=request.description,
+        permissions=request.permissions,
+    )
+    return {"role": RoleResponse.model_validate(role).model_dump()}
+
+
+@app.patch("/admin/roles/{role_name}")
+def admin_roles_update(
+    role_name: str,
+    http_request: Request,
+    request: RoleUpdateRequest,
+    current_user: AuthenticatedUser = Depends(require_admin_permission("roles.manage")),
+) -> dict[str, object]:
+    enforce_rate_limit(http_request, user=current_user)
+    role = update_role(
+        actor_user_id=current_user.user_id,
+        role_name=role_name,
+        display_name=request.display_name,
+        description=request.description,
+        permissions=request.permissions,
+    )
+    return {"role": RoleResponse.model_validate(role).model_dump()}
+
+
+@app.get("/admin/users")
+def admin_users_list(
+    http_request: Request,
+    current_user: AuthenticatedUser = Depends(require_admin_permission("users.read")),
+) -> dict[str, object]:
+    enforce_rate_limit(http_request, user=current_user)
+    users = [AdminUserResponse.model_validate(item).model_dump() for item in list_admin_users()]
+    return {
+        "users": users,
+        "user": serialize_current_user(current_user),
+    }
+
+
+@app.post("/admin/users")
+def admin_users_create(
+    http_request: Request,
+    request: AdminUserCreateRequest,
+    current_user: AuthenticatedUser = Depends(require_admin_permission("users.manage")),
+) -> dict[str, object]:
+    enforce_rate_limit(http_request, user=current_user)
+    user = create_admin_user(
+        actor_user_id=current_user.user_id,
+        email=request.email,
+        password=request.password,
+        full_name=request.full_name,
+        role=request.role,
+        is_active=request.is_active,
+    )
+    return {"user": AdminUserResponse.model_validate(user).model_dump()}
+
+
+@app.get("/admin/users/{user_id}")
+def admin_user_detail(
+    user_id: str,
+    http_request: Request,
+    current_user: AuthenticatedUser = Depends(require_admin_permission("users.read")),
+) -> dict[str, object]:
+    enforce_rate_limit(http_request, user=current_user)
+    user = get_admin_user(user_id)
+    return {"user": AdminUserResponse.model_validate(user).model_dump()}
+
+
+@app.patch("/admin/users/{user_id}")
+def admin_user_update(
+    user_id: str,
+    http_request: Request,
+    request: AdminUserUpdateRequest,
+    current_user: AuthenticatedUser = Depends(require_admin_permission("users.manage")),
+) -> dict[str, object]:
+    enforce_rate_limit(http_request, user=current_user)
+    user = update_admin_user(
+        actor_user_id=current_user.user_id,
+        user_id=user_id,
+        role=request.role,
+        is_active=request.is_active,
+    )
+    return {"user": AdminUserResponse.model_validate(user).model_dump()}
+
+
+@app.put("/admin/users/{user_id}/permissions")
+def admin_user_permissions_update(
+    user_id: str,
+    http_request: Request,
+    request: UserPermissionOverrideUpdateRequest,
+    current_user: AuthenticatedUser = Depends(require_admin_permission("users.manage")),
+) -> dict[str, object]:
+    enforce_rate_limit(http_request, user=current_user)
+    user = update_user_permissions(
+        actor_user_id=current_user.user_id,
+        user_id=user_id,
+        granted_permissions=request.granted_permissions,
+        revoked_permissions=request.revoked_permissions,
+    )
+    return {"user": AdminUserResponse.model_validate(user).model_dump()}
+
+
+@app.get("/admin/activity-logs")
+def admin_activity_logs(
+    http_request: Request,
+    limit: int = 50,
+    actor_user_id: str | None = None,
+    target_user_id: str | None = None,
+    action: str | None = None,
+    entity_type: str | None = None,
+    current_user: AuthenticatedUser = Depends(require_admin_permission("activity.read")),
+) -> dict[str, object]:
+    enforce_rate_limit(http_request, user=current_user)
+    items = get_activity_logs(
+        limit=limit,
+        actor_user_id=actor_user_id,
+        target_user_id=target_user_id,
+        action=action,
+        entity_type=entity_type,
+    )
+    return {
+        "items": [ActivityLogResponse.model_validate(item).model_dump() for item in items],
+        "user": serialize_current_user(current_user),
+    }
+
+
+@app.get("/admin/dashboard", response_class=HTMLResponse)
+def admin_dashboard(
+    http_request: Request,
+    token: str | None = None,
+) -> HTMLResponse:
+    access_token = (token or "").strip()
+    if not access_token:
+        access_token = (http_request.cookies.get("admin_access_token") or "").strip()
+    if not access_token:
+        authorization = http_request.headers.get("authorization", "")
+        scheme, _, bearer_token = authorization.partition(" ")
+        if scheme.lower() == "bearer" and bearer_token.strip():
+            access_token = bearer_token.strip()
+
+    if not access_token:
+        return HTMLResponse(render_admin_login(), status_code=401)
+
+    try:
+        current_user = require_admin_access_token(access_token)
+        enforce_rate_limit(http_request, user=current_user)
+    except HTTPException as exc:
+        message = (
+            exc.detail.get("message", "Authentication failed.")
+            if isinstance(exc.detail, dict)
+            else str(exc.detail)
+        )
+        return HTMLResponse(render_admin_login(error_message=message), status_code=exc.status_code)
+
+    return HTMLResponse(
+        render_admin_dashboard(
+            summary=get_dashboard_summary(),
+            current_user=current_user,
+            token=access_token,
+        )
+    )
+
+
+@app.get("/admin/dashboard/login", response_class=HTMLResponse)
+def admin_dashboard_login_page() -> HTMLResponse:
+    return HTMLResponse(render_admin_login())
+
+
+@app.post("/admin/dashboard/login")
+def admin_dashboard_login_submit(
+    request: LoginRequest,
+):
+    try:
+        session = authenticate_user(email=request.email, password=request.password)
+    except HTTPException as exc:
+        message = (
+            exc.detail.get("message", "Authentication failed.")
+            if isinstance(exc.detail, dict)
+            else str(exc.detail)
+        )
+        return JSONResponse({"message": message}, status_code=exc.status_code)
+
+    user = session.get("user") if isinstance(session, dict) else None
+    permissions = (user or {}).get("permissions") if isinstance(user, dict) else None
+    if not isinstance(permissions, list) or "admin.access" not in permissions:
+        return JSONResponse(
+            {"message": "هذا الحساب لا يملك صلاحية الدخول إلى لوحة المسؤول."},
+            status_code=403,
+        )
+
+    response = JSONResponse({"status": "ok", "redirect_to": "/admin/dashboard"})
+    response.set_cookie(
+        "admin_access_token",
+        str(session["access_token"]),
+        httponly=True,
+        samesite="lax",
+        secure=False,
+        max_age=max(60, int(settings.access_token_ttl_seconds)),
+    )
+    return response
+
+
+@app.get("/admin/dashboard/logout")
+def admin_dashboard_logout() -> RedirectResponse:
+    response = RedirectResponse(url="/admin/dashboard/login", status_code=303)
+    response.delete_cookie("admin_access_token")
+    return response
+
+
 @app.get("/users")
 def users_list(
     http_request: Request,
-    current_user: AuthenticatedUser = Depends(require_role(["admin"])),
+    current_user: AuthenticatedUser = Depends(require_permission("users.read")),
 ) -> dict[str, object]:
     enforce_rate_limit(http_request, user=current_user)
     return {
@@ -486,12 +803,18 @@ def users_list(
 @app.patch("/users/{user_id}/role")
 def patch_user_role(
     user_id: str,
+    http_request: Request,
     request: UpdateUserRoleRequest,
-    current_user: AuthenticatedUser = Depends(require_role(["admin"])),
+    current_user: AuthenticatedUser = Depends(require_permission("users.manage")),
 ) -> dict[str, object]:
-    del current_user
+    enforce_rate_limit(http_request, user=current_user)
+    user = update_admin_user(
+        actor_user_id=current_user.user_id,
+        user_id=user_id,
+        role=request.role,
+    )
     return {
-        "user": update_user_role(user_id=user_id, role=request.role),
+        "user": AdminUserResponse.model_validate(user).model_dump(),
     }
 
 

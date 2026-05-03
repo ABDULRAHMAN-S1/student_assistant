@@ -1,6 +1,6 @@
 import 'package:hive/hive.dart';
 
-import '../../../../app/local_encryption_key_provider.dart';
+import '../../../../app/app_hive.dart';
 
 class ChatHistoryStore {
   const ChatHistoryStore();
@@ -11,21 +11,14 @@ class ChatHistoryStore {
     if (Hive.isBoxOpen(_boxName)) {
       return Hive.box(_boxName);
     }
-    final encryptionKey = await LocalEncryptionKeyProvider.instance.getKey();
     try {
-      return await Hive.openBox(
-        _boxName,
-        encryptionCipher: HiveAesCipher(encryptionKey),
-      );
+      return await AppHive.openBox(_boxName);
     } catch (error) {
-      if (_isFileLockError(error)) {
+      if (AppHive.isFileLockError(error)) {
         rethrow;
       }
       await Hive.deleteBoxFromDisk(_boxName);
-      return Hive.openBox(
-        _boxName,
-        encryptionCipher: HiveAesCipher(encryptionKey),
-      );
+      return AppHive.openBox(_boxName);
     }
   }
 
@@ -58,12 +51,5 @@ class ChatHistoryStore {
   Future<void> clearHistory({required bool isArabic}) async {
     final box = await _openBox();
     await box.delete(_historyKey(isArabic));
-  }
-
-  bool _isFileLockError(Object error) {
-    final message = error.toString().toLowerCase();
-    return message.contains('lock failed') ||
-        message.contains('being used by another process') ||
-        message.contains('cannot delete file');
   }
 }

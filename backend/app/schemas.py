@@ -32,6 +32,13 @@ MAX_NOTIFICATION_LOCALE_LENGTH = 16
 MAX_NOTIFICATION_CURSOR_LENGTH = 512
 MAX_NOTIFICATION_ROUTE_TYPE_LENGTH = 32
 MAX_NOTIFICATION_CATEGORY_PREFERENCES = 32
+MAX_ROLE_NAME_LENGTH = 32
+MAX_ROLE_DISPLAY_NAME_LENGTH = 120
+MAX_ROLE_DESCRIPTION_LENGTH = 240
+MAX_PERMISSION_CODE_LENGTH = 64
+MAX_PERMISSION_CODES = 32
+MAX_ACTIVITY_ACTION_LENGTH = 80
+MAX_ACTIVITY_ENTITY_TYPE_LENGTH = 80
 
 
 class StrictModel(BaseModel):
@@ -79,6 +86,37 @@ class RefreshRequest(StrictModel):
 
 class UpdateUserRoleRequest(StrictModel):
     role: str = Field(..., min_length=1, max_length=32)
+
+
+class AdminUserUpdateRequest(StrictModel):
+    role: str | None = Field(None, min_length=1, max_length=MAX_ROLE_NAME_LENGTH)
+    is_active: bool | None = None
+
+
+class AdminUserCreateRequest(StrictModel):
+    email: str = Field(..., min_length=3, max_length=200)
+    password: str = Field(..., min_length=10, max_length=256)
+    full_name: str = Field(..., min_length=1, max_length=200)
+    role: str = Field("student", min_length=1, max_length=MAX_ROLE_NAME_LENGTH)
+    is_active: bool = True
+
+
+class UserPermissionOverrideUpdateRequest(StrictModel):
+    granted_permissions: list[str] = Field(default_factory=list, max_length=MAX_PERMISSION_CODES)
+    revoked_permissions: list[str] = Field(default_factory=list, max_length=MAX_PERMISSION_CODES)
+
+
+class RoleCreateRequest(StrictModel):
+    name: str = Field(..., min_length=2, max_length=MAX_ROLE_NAME_LENGTH)
+    display_name: str = Field(..., min_length=1, max_length=MAX_ROLE_DISPLAY_NAME_LENGTH)
+    description: str = Field("", max_length=MAX_ROLE_DESCRIPTION_LENGTH)
+    permissions: list[str] = Field(default_factory=list, max_length=MAX_PERMISSION_CODES)
+
+
+class RoleUpdateRequest(StrictModel):
+    display_name: str | None = Field(None, min_length=1, max_length=MAX_ROLE_DISPLAY_NAME_LENGTH)
+    description: str | None = Field(None, max_length=MAX_ROLE_DESCRIPTION_LENGTH)
+    permissions: list[str] | None = Field(None, max_length=MAX_PERMISSION_CODES)
 
 
 class StudentProfileUpdateRequest(StrictModel):
@@ -237,3 +275,45 @@ class NotificationReadResponse(StrictModel):
 class NotificationGenerateResponse(StrictModel):
     status: str = "ok"
     generated_count: int = 0
+
+
+class PermissionDefinitionResponse(StrictModel):
+    code: str = Field(..., min_length=1, max_length=MAX_PERMISSION_CODE_LENGTH)
+    label: str
+    description: str
+
+
+class AdminUserResponse(StrictModel):
+    id: str
+    email: str
+    full_name: str
+    role: str
+    is_active: bool
+    created_at: str | None = None
+    updated_at: str | None = None
+    last_login_at: str | None = None
+    permissions: list[str] = Field(default_factory=list)
+    granted_permissions: list[str] = Field(default_factory=list)
+    revoked_permissions: list[str] = Field(default_factory=list)
+
+
+class RoleResponse(StrictModel):
+    name: str
+    display_name: str
+    description: str = ""
+    permissions: list[str] = Field(default_factory=list)
+    is_system: bool = False
+    user_count: int = 0
+    created_at: str | None = None
+    updated_at: str | None = None
+
+
+class ActivityLogResponse(StrictModel):
+    id: str
+    actor_user_id: str | None = None
+    target_user_id: str | None = None
+    action: str = Field(..., min_length=1, max_length=MAX_ACTIVITY_ACTION_LENGTH)
+    entity_type: str = Field(..., min_length=1, max_length=MAX_ACTIVITY_ENTITY_TYPE_LENGTH)
+    entity_id: str = ""
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    created_at: str

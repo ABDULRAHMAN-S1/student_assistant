@@ -29,18 +29,18 @@ import 'reviews_page.dart';
 import 'services/ai_chat_page.dart';
 
 class AppColors {
-  static const background = Color(0xFFFBF4FC);
+  static const background = Color(0xFFF6F8FC);
   static const card = Color(0xFFFFFFFF);
-  static const primaryText = Color(0xFF030213);
-  static const mutedText = Color(0xFF717182);
-  static const border = Color(0x1A000000);
-  static const destructive = Color(0xFFD4183D);
-  static const gradBlue = Color(0xFF2F6CFF);
-  static const gradPurple = Color(0xFF7B2CFF);
-  static const cardPurple = Color(0xFF7B2CFF);
-  static const cardOrange = Color(0xFFFF8A00);
-  static const cardGreen = Color(0xFF00B35A);
-  static const cardPink = Color(0xFFE4008D);
+  static const primaryText = Color(0xFF111827);
+  static const mutedText = Color(0xFF64748B);
+  static const border = Color(0xFFE2E8F0);
+  static const destructive = Color(0xFFE11D48);
+  static const gradBlue = Color(0xFF2563EB);
+  static const gradPurple = Color(0xFF6D28D9);
+  static const cardPurple = Color(0xFF7C3AED);
+  static const cardOrange = Color(0xFFF59E0B);
+  static const cardGreen = Color(0xFF10B981);
+  static const cardPink = Color(0xFFDB2777);
 }
 
 class HomePage extends StatefulWidget {
@@ -448,7 +448,7 @@ class _HomePageState extends State<HomePage> {
 
   List<Widget> _buildPages() {
     return [
-      _homeContent(),
+      _homeDashboardContent(),
       AIChatPage(
         isArabic: _isArabic,
         profileRefreshToken: _profileRefreshSeed,
@@ -475,6 +475,282 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
+  Widget _homeDashboardContent() {
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(16, 14, 16, 150),
+      children: [
+        if (widget.isGuest) _buildGuestBanner(),
+        if (widget.isGuest) const SizedBox(height: 14),
+        if (_isAdmin) _buildAdminAccessBanner(),
+        if (_isAdmin) const SizedBox(height: 14),
+        TaibahWelcomeCard(isArabic: _isArabic),
+        const SizedBox(height: 16),
+        _buildQuickServicesSection(),
+        const SizedBox(height: 22),
+        _buildSmartSuggestionsSection(),
+        const SizedBox(height: 22),
+        _buildLiveContentSection(),
+      ],
+    );
+  }
+
+  Widget _buildSectionTitle({
+    required String title,
+    String? actionText,
+    VoidCallback? onAction,
+    IconData? icon,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Row(
+        children: [
+          if (icon != null) ...[
+            Icon(icon, color: AppColors.gradPurple, size: 22),
+            const SizedBox(width: 8),
+          ],
+          Expanded(
+            child: Text(
+              title,
+              style: const TextStyle(
+                color: AppColors.primaryText,
+                fontSize: 21,
+                fontWeight: FontWeight.w900,
+                height: 1.25,
+              ),
+            ),
+          ),
+          if (actionText != null && onAction != null)
+            TextButton.icon(
+              onPressed: onAction,
+              icon: const Icon(Icons.arrow_back_ios_new_rounded, size: 15),
+              label: Text(
+                actionText,
+                style: const TextStyle(fontWeight: FontWeight.w900),
+              ),
+              style: TextButton.styleFrom(
+                foregroundColor: AppColors.gradPurple,
+                padding: const EdgeInsets.symmetric(horizontal: 4),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildQuickServicesSection() {
+    final services = [
+      _QuickServiceItem(
+        icon: Icons.menu_book_rounded,
+        color: AppColors.gradBlue,
+        background: const Color(0xFFEFF6FF),
+        title: _isArabic ? 'الدورات' : 'Courses',
+        subtitle: _isArabic ? 'دوراتك المسجلة' : 'Your registered courses',
+        onTap: () => _navigateTo(2, _isArabic ? 'الدورات' : 'Courses'),
+      ),
+      _QuickServiceItem(
+        icon: Icons.assignment_turned_in_rounded,
+        color: AppColors.cardPurple,
+        background: const Color(0xFFF5F3FF),
+        title: _isArabic ? 'تسجيل المواد' : 'Course Registration',
+        subtitle: _isArabic ? 'تسجيل وحذف المقررات' : 'Add and drop courses',
+        onTap: () =>
+            _navigateTo(2, _isArabic ? 'تسجيل المواد' : 'Course Registration'),
+      ),
+      _QuickServiceItem(
+        icon: Icons.smart_toy_rounded,
+        color: AppColors.cardOrange,
+        background: const Color(0xFFFFF7ED),
+        title: _isArabic ? 'المساعد الذكي' : 'Smart Assistant',
+        subtitle: _isArabic ? 'اسأل واستفسر' : 'Ask and explore',
+        onTap: () =>
+            _navigateTo(1, _isArabic ? 'المساعد الذكي' : 'Smart Assistant'),
+      ),
+      _QuickServiceItem(
+        icon: Icons.calendar_month_rounded,
+        color: const Color(0xFF20C997),
+        background: const Color(0xFFECFDF5),
+        title: _isArabic ? 'الفعاليات' : 'Events',
+        subtitle: _isArabic ? 'المعارض والورش' : 'Workshops and fairs',
+        onTap: () => setState(() => currentIndex = 3),
+      ),
+    ];
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _buildSectionTitle(
+          title: _isArabic ? 'الخدمات السريعة' : 'Quick Services',
+          actionText: _isArabic ? 'عرض الكل' : 'View all',
+          onAction: () => _navigateTo(2, _isArabic ? 'الخدمات' : 'Services'),
+        ),
+        LayoutBuilder(
+          builder: (context, constraints) {
+            final textScale = MediaQuery.textScalerOf(context).scale(1);
+            final useSingleColumn = constraints.maxWidth < 330;
+            final itemHeight = useSingleColumn
+                ? (textScale > 1.2 ? 120.0 : 104.0)
+                : (textScale > 1.2 ? 134.0 : 112.0);
+
+            return GridView.builder(
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              itemCount: services.length,
+              gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                crossAxisCount: useSingleColumn ? 1 : 2,
+                crossAxisSpacing: 12,
+                mainAxisSpacing: 12,
+                mainAxisExtent: itemHeight,
+              ),
+              itemBuilder: (context, index) =>
+                  _QuickServiceCard(item: services[index]),
+            );
+          },
+        ),
+      ],
+    );
+  }
+
+  Widget _buildSmartSuggestionsSection() {
+    final textScale = MediaQuery.textScalerOf(context).scale(1);
+    final suggestionHeight = textScale > 1.2 ? 178.0 : 152.0;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _buildSectionTitle(
+          title: _isArabic ? 'اقتراحات ذكية لك' : 'Smart Suggestions',
+          icon: Icons.auto_awesome_rounded,
+        ),
+        FutureBuilder<List<RecommendationItem>>(
+          future: _recommendationsFuture,
+          builder: (context, snapshot) {
+            if (snapshot.connectionState == ConnectionState.waiting) {
+              return SizedBox(
+                height: suggestionHeight,
+                child: const Center(
+                  child: CircularProgressIndicator(strokeWidth: 2.2),
+                ),
+              );
+            }
+
+            final recommendations =
+                snapshot.data ?? const <RecommendationItem>[];
+            if (recommendations.isEmpty) {
+              return SizedBox(
+                height: suggestionHeight,
+                child: ListView(
+                  scrollDirection: Axis.horizontal,
+                  clipBehavior: Clip.none,
+                  children: [
+                    _ReminderSuggestionCard(
+                      isArabic: _isArabic,
+                      onTap: () => _navigateTo(
+                        2,
+                        _isArabic ? 'تسجيل المواد' : 'Course Registration',
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    _ProfileSuggestionCard(
+                      isArabic: _isArabic,
+                      onTap: widget.isGuest
+                          ? () => _showLoginDialog(
+                              _isArabic ? 'ملفك الأكاديمي' : 'Your profile',
+                            )
+                          : _openProfilePage,
+                    ),
+                  ],
+                ),
+              );
+            }
+
+            return SizedBox(
+              height: suggestionHeight,
+              child: ListView.separated(
+                scrollDirection: Axis.horizontal,
+                clipBehavior: Clip.none,
+                itemCount: recommendations.length,
+                separatorBuilder: (_, _) => const SizedBox(width: 12),
+                itemBuilder: (context, index) => _SmartSuggestionCard(
+                  item: recommendations[index],
+                  isArabic: _isArabic,
+                  onTap: () => _openRecommendation(recommendations[index]),
+                ),
+              ),
+            );
+          },
+        ),
+      ],
+    );
+  }
+
+  Widget _buildLiveContentSection() {
+    final controller = _engagementController;
+    if (controller == null) {
+      return _buildLiveContentBody();
+    }
+
+    return AnimatedBuilder(
+      animation: controller,
+      builder: (context, _) => _buildLiveContentBody(),
+    );
+  }
+
+  Widget _buildLiveContentBody() {
+    final feed = _engagementController?.data;
+    final notification = feed?.notifications.isNotEmpty == true
+        ? feed!.notifications.first
+        : null;
+    final suggestion = feed?.suggestions.isNotEmpty == true
+        ? feed!.suggestions.first
+        : null;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _buildSectionTitle(
+          title: _isArabic ? 'المحتوى الحي' : 'Live Content',
+          actionText: _isArabic ? 'عرض الكل' : 'View all',
+          onAction: _openNotificationsInbox,
+        ),
+        if (_engagementController?.isLoading == true)
+          const SizedBox(
+            height: 116,
+            child: Center(child: CircularProgressIndicator(strokeWidth: 2.2)),
+          )
+        else if (notification != null)
+          _LiveContentCard(
+            icon: Icons.campaign_rounded,
+            color: AppColors.cardPurple,
+            title: notification.title,
+            body: notification.message,
+            footer: _isArabic ? 'تنبيه جديد' : 'New alert',
+            onTap: () => _openNotification(notification),
+          )
+        else if (suggestion != null)
+          _LiveContentCard(
+            icon: Icons.school_rounded,
+            color: AppColors.gradBlue,
+            title: suggestion.title,
+            body: suggestion.body,
+            footer: _isArabic ? 'اقتراح مناسب لك' : 'Matched suggestion',
+            onTap: () => _openSuggestionDetails(suggestion),
+          )
+        else
+          _LiveContentCard(
+            icon: Icons.campaign_rounded,
+            color: AppColors.cardPurple,
+            title: _isArabic ? 'إعلان من الجامعة' : 'University Announcement',
+            body: _isArabic
+                ? 'فتح التقديم على المنح الدراسية للعام 2024'
+                : 'Scholarship applications are now open for 2024',
+            footer: _isArabic ? '20 مايو 2024' : 'May 20, 2024',
+            onTap: _openNotificationsInbox,
+          ),
+      ],
+    );
+  }
+
+  // ignore: unused_element
   Widget _homeContent() {
     return ListView(
       padding: const EdgeInsets.fromLTRB(16, 14, 16, 160),
@@ -1247,14 +1523,423 @@ class _HomePageState extends State<HomePage> {
   }
 }
 
+class _QuickServiceItem {
+  const _QuickServiceItem({
+    required this.icon,
+    required this.color,
+    required this.background,
+    required this.title,
+    required this.subtitle,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final Color color;
+  final Color background;
+  final String title;
+  final String subtitle;
+  final VoidCallback onTap;
+}
+
+class _QuickServiceCard extends StatelessWidget {
+  const _QuickServiceCard({required this.item});
+
+  final _QuickServiceItem item;
+
+  @override
+  Widget build(BuildContext context) {
+    final textScale = MediaQuery.textScalerOf(context).scale(1);
+    final compact = MediaQuery.sizeOf(context).width < 360 || textScale > 1.15;
+    final iconBoxSize = compact ? 46.0 : 54.0;
+    final iconSize = compact ? 26.0 : 30.0;
+
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: item.onTap,
+        borderRadius: BorderRadius.circular(18),
+        child: Ink(
+          decoration: BoxDecoration(
+            color: item.background,
+            borderRadius: BorderRadius.circular(18),
+            border: Border.all(color: item.color.withValues(alpha: 0.12)),
+            boxShadow: const [
+              BoxShadow(
+                color: Color(0x08000000),
+                blurRadius: 12,
+                offset: Offset(0, 6),
+              ),
+            ],
+          ),
+          child: Padding(
+            padding: EdgeInsets.all(compact ? 12 : 14),
+            child: Row(
+              children: [
+                Container(
+                  width: iconBoxSize,
+                  height: iconBoxSize,
+                  decoration: BoxDecoration(
+                    color: item.color.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(compact ? 14 : 16),
+                  ),
+                  child: Icon(item.icon, color: item.color, size: iconSize),
+                ),
+                SizedBox(width: compact ? 10 : 12),
+                Expanded(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        item.title,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: AppColors.primaryText,
+                          fontSize: compact ? 15 : 16,
+                          fontWeight: FontWeight.w900,
+                          height: 1.25,
+                        ),
+                      ),
+                      SizedBox(height: compact ? 5 : 6),
+                      Text(
+                        item.subtitle,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: AppColors.mutedText,
+                          fontSize: compact ? 12 : 12.5,
+                          fontWeight: FontWeight.w700,
+                          height: 1.35,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ReminderSuggestionCard extends StatelessWidget {
+  const _ReminderSuggestionCard({required this.isArabic, required this.onTap});
+
+  final bool isArabic;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: 268,
+      child: _GradientSuggestionShell(
+        color: AppColors.destructive,
+        background: const Color(0xFFFFF1F5),
+        icon: Icons.timer_rounded,
+        title: isArabic ? 'تنبيه تسجيل' : 'Registration Alert',
+        subtitle: isArabic
+            ? 'بقي 4 أيام على تسجيل المقررات'
+            : '4 days left for course registration',
+        caption: isArabic ? 'لا تفوت الفرصة' : 'Do not miss it',
+        actionText: isArabic ? 'اذهب للتسجيل' : 'Register now',
+        onTap: onTap,
+      ),
+    );
+  }
+}
+
+class _ProfileSuggestionCard extends StatelessWidget {
+  const _ProfileSuggestionCard({required this.isArabic, required this.onTap});
+
+  final bool isArabic;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: 206,
+      child: _GradientSuggestionShell(
+        color: AppColors.gradBlue,
+        background: const Color(0xFFF2F7FF),
+        icon: Icons.school_rounded,
+        title: isArabic ? 'ملفك الأكاديمي' : 'Academic Profile',
+        subtitle: isArabic ? 'حدّث بياناتك' : 'Update your data',
+        caption: isArabic ? 'اقتراحات أدق' : 'Better matches',
+        actionText: isArabic ? 'عرض الملف' : 'Open profile',
+        onTap: onTap,
+      ),
+    );
+  }
+}
+
+class _SmartSuggestionCard extends StatelessWidget {
+  const _SmartSuggestionCard({
+    required this.item,
+    required this.isArabic,
+    required this.onTap,
+  });
+
+  final RecommendationItem item;
+  final bool isArabic;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final isCourse = item.type == RecommendationItem.courseType;
+    final color = isCourse ? AppColors.gradBlue : AppColors.cardPink;
+
+    return SizedBox(
+      width: 240,
+      child: _GradientSuggestionShell(
+        color: color,
+        background: isCourse
+            ? const Color(0xFFF2F7FF)
+            : const Color(0xFFFFF1FA),
+        icon: isCourse ? Icons.school_rounded : Icons.event_available_rounded,
+        title: item.title,
+        subtitle: item.description,
+        caption: item.reason,
+        actionText: isArabic
+            ? (isCourse ? 'عرض الدورة' : 'عرض الفعالية')
+            : (isCourse ? 'View course' : 'View event'),
+        onTap: onTap,
+      ),
+    );
+  }
+}
+
+class _GradientSuggestionShell extends StatelessWidget {
+  const _GradientSuggestionShell({
+    required this.color,
+    required this.background,
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    required this.caption,
+    required this.actionText,
+    required this.onTap,
+  });
+
+  final Color color;
+  final Color background;
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final String caption;
+  final String actionText;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(20),
+        child: Ink(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: background,
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(color: color.withValues(alpha: 0.13)),
+            boxShadow: const [
+              BoxShadow(
+                color: Color(0x08000000),
+                blurRadius: 12,
+                offset: Offset(0, 6),
+              ),
+            ],
+          ),
+          child: Row(
+            children: [
+              Container(
+                width: 58,
+                height: 58,
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.8),
+                  shape: BoxShape.circle,
+                ),
+                child: Icon(icon, color: color, size: 30),
+              ),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Text(
+                      title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: color,
+                        fontSize: 17,
+                        fontWeight: FontWeight.w900,
+                        height: 1.25,
+                      ),
+                    ),
+                    const SizedBox(height: 7),
+                    Text(
+                      subtitle,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: AppColors.primaryText,
+                        fontSize: 14,
+                        fontWeight: FontWeight.w800,
+                        height: 1.35,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      caption,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: AppColors.mutedText,
+                        fontSize: 12.5,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    const Spacer(),
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        actionText,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: color,
+                          fontSize: 13.5,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _LiveContentCard extends StatelessWidget {
+  const _LiveContentCard({
+    required this.icon,
+    required this.color,
+    required this.title,
+    required this.body,
+    required this.footer,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final Color color;
+  final String title;
+  final String body;
+  final String footer;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(18),
+        child: Ink(
+          padding: const EdgeInsets.all(18),
+          decoration: BoxDecoration(
+            color: AppColors.card,
+            borderRadius: BorderRadius.circular(18),
+            border: Border.all(color: AppColors.border),
+            boxShadow: const [
+              BoxShadow(
+                color: Color(0x0F000000),
+                blurRadius: 10,
+                offset: Offset(0, 5),
+              ),
+            ],
+          ),
+          child: Row(
+            children: [
+              Container(
+                width: 64,
+                height: 64,
+                decoration: BoxDecoration(
+                  color: color.withValues(alpha: 0.08),
+                  shape: BoxShape.circle,
+                ),
+                child: Icon(icon, color: color, size: 34),
+              ),
+              const SizedBox(width: 16),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: AppColors.primaryText,
+                        fontSize: 17,
+                        fontWeight: FontWeight.w900,
+                        height: 1.25,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      body,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: AppColors.mutedText,
+                        fontSize: 14,
+                        fontWeight: FontWeight.w700,
+                        height: 1.45,
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    Text(
+                      footer,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: color,
+                        fontSize: 13.5,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class TaibahWelcomeCard extends StatelessWidget {
   final bool isArabic;
   const TaibahWelcomeCard({super.key, required this.isArabic});
 
   @override
   Widget build(BuildContext context) {
+    final textScale = MediaQuery.textScalerOf(context).scale(1);
+    final compact = MediaQuery.sizeOf(context).width < 360 || textScale > 1.2;
+    final logoSize = compact ? 52.0 : 60.0;
+
     return Container(
-      padding: const EdgeInsets.all(16),
+      padding: EdgeInsets.all(compact ? 14 : 16),
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(20),
         gradient: const LinearGradient(
@@ -1273,11 +1958,11 @@ class TaibahWelcomeCard extends StatelessWidget {
       child: Row(
         children: [
           Container(
-            width: 60,
-            height: 60,
+            width: logoSize,
+            height: logoSize,
             decoration: BoxDecoration(
               color: Colors.white,
-              borderRadius: BorderRadius.circular(16),
+              borderRadius: BorderRadius.circular(compact ? 14 : 16),
               border: Border.all(
                 color: Colors.white.withValues(alpha: 0.3),
                 width: 2,
@@ -1291,7 +1976,7 @@ class TaibahWelcomeCard extends StatelessWidget {
               ],
             ),
             child: ClipRRect(
-              borderRadius: BorderRadius.circular(14),
+              borderRadius: BorderRadius.circular(compact ? 12 : 14),
               child: Image.asset(
                 'assets/taibah_logo.png',
                 fit: BoxFit.contain,
@@ -1305,7 +1990,7 @@ class TaibahWelcomeCard extends StatelessWidget {
               ),
             ),
           ),
-          const SizedBox(width: 16),
+          SizedBox(width: compact ? 12 : 16),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -1314,23 +1999,27 @@ class TaibahWelcomeCard extends StatelessWidget {
                   isArabic
                       ? 'مرحبًا بطلاب جامعة طيبة'
                       : 'Welcome Taibah Students',
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
                   textAlign: TextAlign.left,
-                  style: const TextStyle(
+                  style: TextStyle(
                     color: Colors.white,
-                    fontSize: 18.5,
+                    fontSize: compact ? 17 : 18.5,
                     fontWeight: FontWeight.w900,
                     height: 1.3,
                   ),
                 ),
-                const SizedBox(height: 6),
+                SizedBox(height: compact ? 5 : 6),
                 Text(
                   isArabic
                       ? 'اختر خدمتك التعليمية الخاصة بك'
                       : 'Choose your educational service',
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
                   textAlign: TextAlign.left,
-                  style: const TextStyle(
-                    color: Color(0xEFFFFFFF),
-                    fontSize: 13.5,
+                  style: TextStyle(
+                    color: const Color(0xEFFFFFFF),
+                    fontSize: compact ? 12.8 : 13.5,
                     fontWeight: FontWeight.w700,
                     height: 1.45,
                   ),
@@ -1489,7 +2178,7 @@ class _TopBar extends StatelessWidget implements PreferredSizeWidget {
   });
 
   @override
-  Size get preferredSize => const Size.fromHeight(70);
+  Size get preferredSize => const Size.fromHeight(71);
 
   @override
   Widget build(BuildContext context) {
@@ -1497,6 +2186,7 @@ class _TopBar extends StatelessWidget implements PreferredSizeWidget {
       backgroundColor: AppColors.card,
       surfaceTintColor: Colors.transparent,
       elevation: 0,
+      shadowColor: Colors.black.withValues(alpha: 0.08),
       titleSpacing: 0,
       automaticallyImplyLeading: false,
       flexibleSpace: SafeArea(
@@ -1616,6 +2306,10 @@ class _TopBar extends StatelessWidget implements PreferredSizeWidget {
           ),
         ),
       ),
+      bottom: const PreferredSize(
+        preferredSize: Size.fromHeight(1),
+        child: Divider(height: 1, thickness: 1, color: AppColors.border),
+      ),
     );
   }
 
@@ -1625,57 +2319,11 @@ class _TopBar extends StatelessWidget implements PreferredSizeWidget {
     int count = 0,
     Color? color,
   }) {
-    final useAccent = color != null;
-    return InkWell(
+    return _ReactiveCircleButton(
+      icon: icon,
       onTap: onTap,
-      customBorder: const CircleBorder(),
-      child: Container(
-        width: 38,
-        height: 38,
-        decoration: useAccent
-            ? BoxDecoration(
-                shape: BoxShape.circle,
-                gradient: LinearGradient(
-                  colors: [color, color.withValues(alpha: 0.8)],
-                ),
-              )
-            : BoxDecoration(
-                shape: BoxShape.circle,
-                color: AppColors.card,
-                border: Border.all(color: AppColors.border),
-              ),
-        child: count > 0
-            ? Stack(
-                children: [
-                  Center(
-                    child: Icon(
-                      icon,
-                      color: useAccent ? Colors.white : AppColors.primaryText,
-                      size: 20,
-                    ),
-                  ),
-                  Positioned(
-                    top: 6,
-                    right: 6,
-                    child: Container(
-                      width: 8,
-                      height: 8,
-                      decoration: const BoxDecoration(
-                        color: AppColors.destructive,
-                        shape: BoxShape.circle,
-                      ),
-                    ),
-                  ),
-                ],
-              )
-            : Center(
-                child: Icon(
-                  icon,
-                  color: useAccent ? Colors.white : AppColors.primaryText,
-                  size: 20,
-                ),
-              ),
-      ),
+      count: count,
+      accent: color,
     );
   }
 
@@ -1708,6 +2356,141 @@ class _TopBar extends StatelessWidget implements PreferredSizeWidget {
   }
 }
 
+class _ReactiveCircleButton extends StatefulWidget {
+  const _ReactiveCircleButton({
+    required this.icon,
+    required this.onTap,
+    this.count = 0,
+    this.accent,
+  });
+
+  final IconData icon;
+  final VoidCallback onTap;
+  final int count;
+  final Color? accent;
+
+  @override
+  State<_ReactiveCircleButton> createState() => _ReactiveCircleButtonState();
+}
+
+class _ReactiveCircleButtonState extends State<_ReactiveCircleButton> {
+  bool _hovered = false;
+  bool _pressed = false;
+
+  void _setHovered(bool value) {
+    if (_hovered == value) return;
+    setState(() {
+      _hovered = value;
+      if (!value) {
+        _pressed = false;
+      }
+    });
+  }
+
+  void _setPressed(bool value) {
+    if (_pressed == value) return;
+    setState(() => _pressed = value);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final hasAccent = widget.accent != null;
+    final accent = widget.accent ?? AppColors.gradBlue;
+    final active = _hovered || _pressed;
+    final scale = _pressed ? 0.92 : (_hovered ? 1.06 : 1.0);
+
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      onEnter: (_) => _setHovered(true),
+      onExit: (_) => _setHovered(false),
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTapDown: (_) => _setPressed(true),
+        onTapUp: (_) => _setPressed(false),
+        onTapCancel: () => _setPressed(false),
+        onTap: widget.onTap,
+        child: Semantics(
+          button: true,
+          child: AnimatedScale(
+            scale: scale,
+            duration: const Duration(milliseconds: 120),
+            curve: Curves.easeOut,
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 160),
+              curve: Curves.easeOut,
+              width: 40,
+              height: 40,
+              decoration: hasAccent
+                  ? BoxDecoration(
+                      shape: BoxShape.circle,
+                      gradient: LinearGradient(
+                        colors: [
+                          accent,
+                          Color.lerp(accent, AppColors.gradPurple, 0.24)!,
+                        ],
+                      ),
+                      boxShadow: [
+                        BoxShadow(
+                          color: accent.withValues(alpha: active ? 0.28 : 0.16),
+                          blurRadius: active ? 16 : 10,
+                          offset: Offset(0, active ? 7 : 4),
+                        ),
+                      ],
+                    )
+                  : BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: active
+                          ? accent.withValues(alpha: _pressed ? 0.16 : 0.10)
+                          : AppColors.card,
+                      border: Border.all(
+                        color: active
+                            ? accent.withValues(alpha: 0.34)
+                            : AppColors.border,
+                      ),
+                      boxShadow: active
+                          ? [
+                              BoxShadow(
+                                color: accent.withValues(alpha: 0.12),
+                                blurRadius: 12,
+                                offset: const Offset(0, 5),
+                              ),
+                            ]
+                          : null,
+                    ),
+              child: Stack(
+                children: [
+                  Center(
+                    child: Icon(
+                      widget.icon,
+                      color: hasAccent
+                          ? Colors.white
+                          : (active ? accent : AppColors.primaryText),
+                      size: 20,
+                    ),
+                  ),
+                  if (widget.count > 0)
+                    Positioned(
+                      top: 6,
+                      right: 6,
+                      child: Container(
+                        width: 8,
+                        height: 8,
+                        decoration: const BoxDecoration(
+                          color: AppColors.destructive,
+                          shape: BoxShape.circle,
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _BottomBar extends StatelessWidget {
   final bool isArabic;
   final bool isGuest;
@@ -1725,6 +2508,10 @@ class _BottomBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final width = MediaQuery.sizeOf(context).width;
+    final textScale = MediaQuery.textScalerOf(context).scale(1);
+    final compact = width < 380 || textScale > 1.15;
+
     final labels = isArabic
         ? ['الرئيسية', 'AI', 'الدورات', 'الفعاليات', 'آراء']
         : ['Home', 'AI', 'Courses', 'Events', 'Reviews'];
@@ -1740,59 +2527,177 @@ class _BottomBar extends StatelessWidget {
     return SafeArea(
       top: false,
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(14, 10, 14, 12),
+        padding: EdgeInsets.fromLTRB(
+          compact ? 10 : 14,
+          10,
+          compact ? 10 : 14,
+          12,
+        ),
         child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+          padding: EdgeInsets.symmetric(
+            horizontal: compact ? 6 : 10,
+            vertical: compact ? 10 : 12,
+          ),
           decoration: BoxDecoration(
             color: AppColors.card,
             borderRadius: BorderRadius.circular(24),
             border: Border.all(color: AppColors.border),
             boxShadow: const [
               BoxShadow(
-                color: Color(0x0A000000),
-                blurRadius: 12,
-                offset: Offset(0, 6),
+                color: Color(0x140F172A),
+                blurRadius: 18,
+                offset: Offset(0, 8),
               ),
             ],
           ),
           child: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: List.generate(5, (i) {
               final selected = currentIndex == i;
-              return InkWell(
-                onTap: () => onChange(i),
-                borderRadius: BorderRadius.circular(18),
-                child: Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 14,
-                    vertical: 12,
-                  ),
-                  decoration: BoxDecoration(
-                    color: selected ? accent : Colors.transparent,
-                    borderRadius: BorderRadius.circular(18),
-                  ),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(
-                        icons[i],
-                        size: 26,
-                        color: selected ? Colors.white : AppColors.mutedText,
-                      ),
-                      const SizedBox(height: 7),
-                      Text(
-                        labels[i],
-                        style: TextStyle(
-                          fontSize: 12.5,
-                          fontWeight: FontWeight.w900,
-                          color: selected ? Colors.white : AppColors.mutedText,
-                        ),
-                      ),
-                    ],
+              return Expanded(
+                child: Padding(
+                  padding: EdgeInsets.symmetric(horizontal: compact ? 1 : 2),
+                  child: _BottomNavItemButton(
+                    icon: icons[i],
+                    label: labels[i],
+                    selected: selected,
+                    accent: accent,
+                    compact: compact,
+                    onTap: () => onChange(i),
                   ),
                 ),
               );
             }),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _BottomNavItemButton extends StatefulWidget {
+  const _BottomNavItemButton({
+    required this.icon,
+    required this.label,
+    required this.selected,
+    required this.accent,
+    required this.compact,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final String label;
+  final bool selected;
+  final Color accent;
+  final bool compact;
+  final VoidCallback onTap;
+
+  @override
+  State<_BottomNavItemButton> createState() => _BottomNavItemButtonState();
+}
+
+class _BottomNavItemButtonState extends State<_BottomNavItemButton> {
+  bool _hovered = false;
+  bool _pressed = false;
+
+  void _setHovered(bool value) {
+    if (_hovered == value) return;
+    setState(() {
+      _hovered = value;
+      if (!value) {
+        _pressed = false;
+      }
+    });
+  }
+
+  void _setPressed(bool value) {
+    if (_pressed == value) return;
+    setState(() => _pressed = value);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final active = widget.selected || _hovered || _pressed;
+    final selected = widget.selected;
+    final scale = _pressed ? 0.96 : (_hovered ? 1.04 : 1.0);
+    final foreground = selected
+        ? Colors.white
+        : active
+        ? widget.accent
+        : AppColors.mutedText;
+
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      onEnter: (_) => _setHovered(true),
+      onExit: (_) => _setHovered(false),
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTapDown: (_) => _setPressed(true),
+        onTapUp: (_) => _setPressed(false),
+        onTapCancel: () => _setPressed(false),
+        onTap: widget.onTap,
+        child: Semantics(
+          button: true,
+          selected: selected,
+          child: AnimatedScale(
+            scale: scale,
+            duration: const Duration(milliseconds: 120),
+            curve: Curves.easeOut,
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 170),
+              curve: Curves.easeOut,
+              padding: EdgeInsets.symmetric(
+                horizontal: widget.compact ? 6 : 10,
+                vertical: widget.compact ? 9 : 10,
+              ),
+              decoration: BoxDecoration(
+                color: selected
+                    ? widget.accent
+                    : active
+                    ? widget.accent.withValues(alpha: 0.10)
+                    : Colors.transparent,
+                borderRadius: BorderRadius.circular(18),
+                border: Border.all(
+                  color: selected
+                      ? widget.accent.withValues(alpha: 0.18)
+                      : active
+                      ? widget.accent.withValues(alpha: 0.22)
+                      : Colors.transparent,
+                ),
+                boxShadow: selected || _hovered
+                    ? [
+                        BoxShadow(
+                          color: widget.accent.withValues(
+                            alpha: selected ? 0.20 : 0.10,
+                          ),
+                          blurRadius: selected ? 14 : 10,
+                          offset: Offset(0, selected ? 6 : 4),
+                        ),
+                      ]
+                    : null,
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    widget.icon,
+                    size: widget.compact ? 23 : 25,
+                    color: foreground,
+                  ),
+                  SizedBox(height: widget.compact ? 5 : 6),
+                  Text(
+                    widget.label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: widget.compact ? 10.8 : 12,
+                      fontWeight: FontWeight.w900,
+                      color: foreground,
+                      height: 1.1,
+                    ),
+                  ),
+                ],
+              ),
+            ),
           ),
         ),
       ),

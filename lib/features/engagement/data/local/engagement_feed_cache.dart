@@ -1,6 +1,6 @@
 import 'package:hive_flutter/hive_flutter.dart';
 
-import '../../../../app/local_encryption_key_provider.dart';
+import '../../../../app/app_hive.dart';
 import '../../domain/models/engagement_feed.dart';
 import '../../domain/models/engagement_feed_page.dart';
 import '../../domain/models/notification_item.dart';
@@ -26,25 +26,9 @@ class EngagementFeedCache {
 
   static Future<Box> _openBox() async {
     if (!Hive.isBoxOpen(boxName)) {
-      await _openEncryptedBox(boxName);
+      await AppHive.openBox(boxName);
     }
     return Hive.box(boxName);
-  }
-
-  static Future<void> _openEncryptedBox(String name) async {
-    final encryptionKey = await LocalEncryptionKeyProvider.instance.getKey();
-    try {
-      await Hive.openBox(name, encryptionCipher: HiveAesCipher(encryptionKey));
-    } catch (error) {
-      final message = error.toString().toLowerCase();
-      if (message.contains('lock failed') ||
-          message.contains('being used by another process') ||
-          message.contains('cannot delete file')) {
-        rethrow;
-      }
-      await Hive.deleteBoxFromDisk(name);
-      await Hive.openBox(name, encryptionCipher: HiveAesCipher(encryptionKey));
-    }
   }
 
   Future<EngagementFeed?> readFeed(String userId) async {
