@@ -15,7 +15,8 @@ class AppSettingsStore {
   static const String hasSeenWelcomeKey = 'hasSeenWelcome';
   static const String isLoggedInKey = 'isLoggedIn';
   static const String authSessionKey = 'authSession';
-  static const String notificationDeviceTokenIdKey = 'notificationDeviceTokenId';
+  static const String notificationDeviceTokenIdKey =
+      'notificationDeviceTokenId';
 
   final Box _box;
 

@@ -113,4 +113,3 @@ For implementation details, Firebase/FCM setup, the deep-link contract, and a
 full manual QA checklist, see:
 
 - `NOTIFICATIONS_RELEASE.md`
-

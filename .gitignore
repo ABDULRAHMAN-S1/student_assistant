@@ -62,7 +62,3 @@ backend/data/logs/
 tmp_*.out
 firebase-debug.log
 firebase-debug.*.log
-
-# Vector Database files (can be regenerated)
-backend/data/vectordb/
-backend/data/chroma.sqlite3
