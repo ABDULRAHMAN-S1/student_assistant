@@ -1,60 +1,64 @@
-flutter/ephemeral/
-
-# Visual Studio user-specific files.
-*.suo
-*.user
-*.userosscache
-*.sln.docstates
-
-# Visual Studio build-related files.
-x64/
-x86/
-
-# Visual Studio cache files
-*.[Cc]ache
-!*.[Cc]ache/
-
-# Node
-node_modules/
-npm-debug.log*
-
-# Flutter
-.dart_tool/
-build/
-.flutter-plugins
-.flutter-plugins-dependencies
-
-# Python / Django
-__pycache__/
+# Miscellaneous
+*.class
+*.log
 *.pyc
+*.swp
+.DS_Store
+.atom/
+.build/
+.buildlog/
+.history
+.svn/
+.swiftpm/
+migrate_working_dir/
+
+# IntelliJ related
+*.iml
+*.ipr
+*.iws
+.idea/
+
+#.vscode/
+
+# Flutter/Dart/Pub related
+**/doc/api/
+**/ios/Flutter/.last_build_id
+.dart_tool/
+.flutter-plugins-dependencies
+.pub-cache/
+.pub/
+/build/
+/coverage/
+
+# Symbolication related
+app.*.symbols
+
+# Obfuscation related
+app.*.map.json
+
+# Android Studio build outputs
+/android/app/debug
+/android/app/profile
+/android/app/release
+
+# Python
 venv/
+__pycache__/
+*.py[cod]
+
+# Environment variables
 .env
+backend/functions/.env.local
 
-# Android
-android/.gradle/
-
-# Runtime / generated backend data
-backend/data/logs/
+# Ignore only local DBs if needed
+backend/data/app.db
 backend/data/feedback/
-backend/data/output/
+backend/data/logs/
 
-# FAQ / RAG evaluation outputs
-backend/data/processed/faq_gold_vs_corpus_tfidf.*
-backend/data/processed/faq_layer2_quality.*
-backend/data/processed/faq_pseudo_gen_tfidf_cosine.*
-backend/data/processed/faq_ref_high_overlap_tfidf.*
-backend/data/processed/faq_ref_natural_paraphrase_tfidf.*
-backend/data/processed/faq_ref_natural_v2_tfidf.*
-backend/data/processed/faq_ref_vs_chat_generated.*
-backend/data/processed/faq_ref_vs_paraphrase_tfidf.*
+# Binary tools
+*.exe
 
-# Vector DB metadata
-backend/data/vectordb/build_info.json
-
-# Temp / Firebase
+# Temp / Firebase local files
 tmp_*.out
 firebase-debug.log
 firebase-debug.*.log
-
-# iOS
-ios/Pods/
