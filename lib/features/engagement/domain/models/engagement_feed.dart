@@ -1,5 +1,5 @@
-import 'engagement_feed_page.dart';
 import 'notification_item.dart';
+import 'engagement_feed_page.dart';
 import 'suggestion_item.dart';
 
 class EngagementFeed {
@@ -46,9 +46,7 @@ class EngagementFeed {
     ];
     return copyWith(
       notifications: List<NotificationItem>.unmodifiable(mergedNotifications),
-      suggestions: nextPage.suggestions.isNotEmpty
-          ? nextPage.suggestions
-          : suggestions,
+      suggestions: nextPage.suggestions.isNotEmpty ? nextPage.suggestions : suggestions,
       page: nextPage.page,
       unreadCount: nextPage.unreadCount,
       generatedCount: nextPage.generatedCount,

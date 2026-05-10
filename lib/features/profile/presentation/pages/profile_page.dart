@@ -28,7 +28,8 @@ class _ProfilePageState extends State<ProfilePage> {
   final _trackController = TextEditingController();
   final _currentSemesterController = TextEditingController();
   final _courseIdController = TextEditingController();
-  final EngagementRepository _engagementRepository = EngagementRepositoryImpl();
+  final EngagementRepository _engagementRepository =
+      EngagementRepositoryImpl();
 
   bool _isLoading = true;
   bool _isSaving = false;
@@ -38,7 +39,7 @@ class _ProfilePageState extends State<ProfilePage> {
   final Set<String> _selectedInterests = <String>{};
   final List<String> _enrolledCourseIds = <String>[];
   NotificationPreferences _notificationPreferences =
-      const NotificationPreferences();
+      NotificationPreferences.empty;
 
   static const Color _backgroundColor = Color(0xFFFBF4FC);
   static const Color _cardColor = Colors.white;
@@ -169,8 +170,8 @@ class _ProfilePageState extends State<ProfilePage> {
               .map(_normalizeInterest)
               .where((value) => value.isNotEmpty),
         );
-      _notificationPreferences = await _engagementRepository
-          .getNotificationPreferences();
+      _notificationPreferences =
+          await _engagementRepository.getNotificationPreferences();
     } catch (_) {
       // Keep local profile behavior even when backend profile sync fails.
     }
@@ -955,9 +956,7 @@ class _ProfilePageState extends State<ProfilePage> {
                               NotificationCategoryPreferenceUpdate(
                                 category: 'live_event',
                                 enablePush: value,
-                                enableInApp: _categoryInAppEnabled(
-                                  'live_event',
-                                ),
+                                enableInApp: _categoryInAppEnabled('live_event'),
                               ),
                             ],
                           );
@@ -977,16 +976,14 @@ class _ProfilePageState extends State<ProfilePage> {
                               NotificationCategoryPreferenceUpdate(
                                 category: 'live_opportunity',
                                 enablePush: value,
-                                enableInApp: _categoryInAppEnabled(
-                                  'live_opportunity',
-                                ),
+                                enableInApp:
+                                    _categoryInAppEnabled('live_opportunity'),
                               ),
                               NotificationCategoryPreferenceUpdate(
                                 category: 'live_deadline',
                                 enablePush: value,
-                                enableInApp: _categoryInAppEnabled(
-                                  'live_deadline',
-                                ),
+                                enableInApp:
+                                    _categoryInAppEnabled('live_deadline'),
                               ),
                             ],
                           );

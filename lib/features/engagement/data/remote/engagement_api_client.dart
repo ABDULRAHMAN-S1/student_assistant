@@ -86,9 +86,7 @@ class EngagementApiClient {
     return mapFeedResponse(payload);
   }
 
-  Future<NotificationReadResult> markNotificationRead(
-    String notificationId,
-  ) async {
+  Future<NotificationReadResult> markNotificationRead(String notificationId) async {
     final payload = await _authorizedRequest(
       'PATCH',
       '/engagement/notifications/$notificationId/read',
@@ -99,7 +97,7 @@ class EngagementApiClient {
         kind: EngagementApiErrorKind.invalidResponse,
       );
     }
-    return mapNotificationReadResponse(payload);
+    return mapNotificationReadResult(payload);
   }
 
   Future<StudentEngagementProfile> getProfile() async {
@@ -178,14 +176,19 @@ class EngagementApiClient {
     bool? enableInApp,
     List<NotificationCategoryPreferenceUpdate> categories = const [],
   }) async {
+    final body = <String, Object?>{
+      'categories': categories.map((item) => item.toJson()).toList(),
+    };
+    if (enablePush != null) {
+      body['enable_push'] = enablePush;
+    }
+    if (enableInApp != null) {
+      body['enable_in_app'] = enableInApp;
+    }
     final payload = await _authorizedRequest(
       'PUT',
       '/engagement/notifications/preferences',
-      body: {
-        'enable_push': enablePush,
-        'enable_in_app': enableInApp,
-        'categories': categories.map((item) => item.toJson()).toList(),
-      },
+      body: body,
     );
     if (payload is! Map<String, dynamic>) {
       throw const EngagementApiException(

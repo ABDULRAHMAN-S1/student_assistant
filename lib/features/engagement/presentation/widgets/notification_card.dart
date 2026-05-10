@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 
 import '../../domain/models/notification_item.dart';
-import '../utils/format_match_reasons.dart';
 import '../utils/format_notification_time.dart';
+import '../utils/format_match_reasons.dart';
 
 class NotificationCard extends StatelessWidget {
   const NotificationCard({

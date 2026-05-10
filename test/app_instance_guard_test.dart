@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -40,18 +41,43 @@ void main() {
     );
     await lockFile.parent.create(recursive: true);
 
-    final externalHandle = await lockFile.open(mode: FileMode.append);
-    await externalHandle.lock(FileLock.exclusive);
+    final helperScript = File(
+      '${tempDir.path}${Platform.pathSeparator}hold_lock.dart',
+    );
+    await helperScript.writeAsString('''
+import 'dart:io';
+
+Future<void> main(List<String> args) async {
+  final path = args.first;
+  final file = File(path);
+  final handle = await file.open(mode: FileMode.append);
+  await handle.lock(FileLock.exclusive);
+  stdout.writeln('locked');
+  await Future<void>.delayed(const Duration(seconds: 10));
+  await handle.unlock();
+  await handle.close();
+}
+''');
+
+    final process = await Process.start('dart', [
+      helperScript.path,
+      lockFile.path,
+    ]);
     addTearDown(() async {
-      try {
-        await externalHandle.unlock();
-      } catch (_) {
-        // The OS may already release the lock on close.
-      }
-      await externalHandle.close();
+      process.kill();
+      await process.exitCode.timeout(
+        const Duration(seconds: 2),
+        onTimeout: () => 0,
+      );
     });
 
-    expect(
+    final ready = await process.stdout
+        .transform(SystemEncoding().decoder)
+        .transform(const LineSplitter())
+        .first;
+    expect(ready, 'locked');
+
+    await expectLater(
       AppInstanceGuard.instance.ensureSingleInstance(),
       throwsA(
         isA<AppInstanceException>().having(

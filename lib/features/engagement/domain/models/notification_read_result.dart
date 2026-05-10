@@ -7,7 +7,7 @@ class NotificationReadResult {
     this.status = 'ok',
   });
 
-  final NotificationItem? notification;
+  final NotificationItem notification;
   final int unreadCount;
   final String status;
 }

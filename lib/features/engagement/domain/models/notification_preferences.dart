@@ -44,20 +44,11 @@ class NotificationCategoryPreference {
   }
 }
 
-class NotificationCategorySetting extends NotificationCategoryPreference {
-  const NotificationCategorySetting({
-    required super.category,
-    required super.enablePush,
-    required super.enableInApp,
-    required super.muted,
-  });
-}
-
 class NotificationPreferences {
   const NotificationPreferences({
-    this.enablePush = true,
-    this.enableInApp = true,
-    this.categories = const [],
+    required this.enablePush,
+    required this.enableInApp,
+    required this.categories,
     this.updatedAt,
   });
 

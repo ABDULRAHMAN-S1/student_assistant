@@ -1,9 +1,9 @@
 import '../../domain/models/engagement_feed.dart';
-import '../../domain/models/notification_category_preference_update.dart';
 import '../../domain/models/notification_device_token.dart';
 import '../../domain/models/notification_preferences.dart';
 import '../../domain/models/notification_read_result.dart';
 import '../../domain/models/student_engagement_profile.dart';
+import '../../domain/models/notification_category_preference_update.dart';
 import '../local/engagement_feed_cache.dart';
 import '../remote/engagement_api_client.dart';
 import 'engagement_repository.dart';
@@ -55,9 +55,7 @@ class EngagementRepositoryImpl implements EngagementRepository {
   }
 
   @override
-  Future<NotificationReadResult> markNotificationRead(
-    String notificationId,
-  ) async {
+  Future<NotificationReadResult> markNotificationRead(String notificationId) async {
     final result = await _remote.markNotificationRead(notificationId);
     final userId = await _remote.currentUserId();
     if (userId != null && userId.isNotEmpty) {
@@ -66,9 +64,7 @@ class EngagementRepositoryImpl implements EngagementRepository {
       if (cached != null) {
         final updatedNotifications = cached.notifications
             .map(
-              (item) => item.id == notificationId
-                  ? (result.notification ?? item)
-                  : item,
+              (item) => item.id == notificationId ? result.notification : item,
             )
             .toList(growable: false);
         await cache.writeFeed(

@@ -98,10 +98,19 @@ See `backend/README.md` for the backend API and startup flow.
 
 See `RELEASE_CHECKLIST.md` for backend and Flutter deployment requirements.
 
+## Notification System Release Notes
 
+The production notification system now includes:
 
-# Launch Screen Assets
+- paginated in-app notifications feed
+- stable read/unread state
+- encrypted local feed cache
+- notification preferences
+- typed deep-link routing
+- Firebase Messaging lifecycle hooks
 
-You can customize the launch screen with your own desired assets by replacing the image files in this directory.
+For implementation details, Firebase/FCM setup, the deep-link contract, and a
+full manual QA checklist, see:
 
-You can also do it by opening your Flutter project's Xcode project with `open ios/Runner.xcworkspace`, selecting `Runner/Assets.xcassets` in the Project Navigator and dropping in the desired images.
+- `NOTIFICATIONS_RELEASE.md`
+

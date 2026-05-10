@@ -33,6 +33,8 @@ try:
         require_admin_permission,
         require_authenticated_user,
         require_permission,
+        require_role,
+        update_user_role,
     )
     from app.config import get_settings
     from app.database import init_database, insert_feedback
@@ -81,7 +83,7 @@ try:
 except ImportError:
     from admin_dashboard import render_admin_dashboard, render_admin_login  # type: ignore
     from admin_service import create_admin_user, create_role, get_activity_logs, get_admin_user, get_dashboard_summary, get_permission_catalog, list_admin_users, list_roles, update_admin_user, update_role, update_user_permissions  # type: ignore
-    from auth_service import AuthenticatedUser, authenticate_user, list_users, refresh_session, register_user, require_admin_access_token, require_admin_permission, require_authenticated_user, require_permission  # type: ignore
+    from auth_service import AuthenticatedUser, authenticate_user, list_users, refresh_session, register_user, require_admin_access_token, require_admin_permission, require_authenticated_user, require_permission, require_role, update_user_role  # type: ignore
     from config import get_settings  # type: ignore
     from database import init_database, insert_feedback  # type: ignore
     from engagement_service import (  # type: ignore

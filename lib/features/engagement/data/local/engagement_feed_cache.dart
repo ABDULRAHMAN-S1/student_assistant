@@ -1,6 +1,6 @@
 import 'package:hive_flutter/hive_flutter.dart';
 
-import '../../../../app/app_hive.dart';
+import '../../../../app/local_encryption_key_provider.dart';
 import '../../domain/models/engagement_feed.dart';
 import '../../domain/models/engagement_feed_page.dart';
 import '../../domain/models/notification_item.dart';
@@ -11,6 +11,17 @@ import '../../domain/models/suggestion_item.dart';
 class EngagementFeedCache {
   const EngagementFeedCache();
 
+  static const String boxName = 'engagement_feed';
+  static const String _feedPrefix = 'feed:';
+  static const String _preferencesPrefix = 'preferences:';
+
+  static Future<Box> _openBox() async {
+    if (!Hive.isBoxOpen(boxName)) {
+      await _openEncryptedBox(boxName);
+    }
+    return Hive.box(boxName);
+  }
+
   static Future<EngagementFeedCache> open() async {
     await _openBox();
     return const EngagementFeedCache();
@@ -20,15 +31,20 @@ class EngagementFeedCache {
     await _openBox();
   }
 
-  static const String boxName = 'engagement_feed';
-  static const String _feedPrefix = 'feed:';
-  static const String _preferencesPrefix = 'preferences:';
-
-  static Future<Box> _openBox() async {
-    if (!Hive.isBoxOpen(boxName)) {
-      await AppHive.openBox(boxName);
+  static Future<void> _openEncryptedBox(String name) async {
+    final encryptionKey = await LocalEncryptionKeyProvider.instance.getKey();
+    try {
+      await Hive.openBox(name, encryptionCipher: HiveAesCipher(encryptionKey));
+    } catch (error) {
+      final message = error.toString().toLowerCase();
+      if (message.contains('lock failed') ||
+          message.contains('being used by another process') ||
+          message.contains('cannot delete file')) {
+        rethrow;
+      }
+      await Hive.deleteBoxFromDisk(name);
+      await Hive.openBox(name, encryptionCipher: HiveAesCipher(encryptionKey));
     }
-    return Hive.box(boxName);
   }
 
   Future<EngagementFeed?> readFeed(String userId) async {
@@ -41,9 +57,8 @@ class EngagementFeedCache {
   }
 
   Future<void> writeFeed(String userId, EngagementFeed feed) {
-    return _openBox().then(
-      (box) => box.put('$_feedPrefix$userId', _encodeFeed(feed)),
-    );
+    return _openBox()
+        .then((box) => box.put('$_feedPrefix$userId', _encodeFeed(feed)));
   }
 
   Future<NotificationPreferences?> readPreferences(String userId) async {
@@ -94,18 +109,13 @@ class EngagementFeedCache {
       notifications: notificationsRaw is List
           ? notificationsRaw
                 .whereType<Map>()
-                .map(
-                  (item) =>
-                      _decodeNotification(Map<String, dynamic>.from(item)),
-                )
+                .map((item) => _decodeNotification(Map<String, dynamic>.from(item)))
                 .toList(growable: false)
           : const [],
       suggestions: suggestionsRaw is List
           ? suggestionsRaw
                 .whereType<Map>()
-                .map(
-                  (item) => _decodeSuggestion(Map<String, dynamic>.from(item)),
-                )
+                .map((item) => _decodeSuggestion(Map<String, dynamic>.from(item)))
                 .toList(growable: false)
           : const [],
       unreadCount: (raw['unreadCount'] as num?)?.toInt() ?? 0,
@@ -115,9 +125,8 @@ class EngagementFeedCache {
             ? Map<String, dynamic>.from(raw['page'] as Map)['hasMore'] == true
             : false,
         nextCursor: raw['page'] is Map
-            ? (Map<String, dynamic>.from(
-                raw['page'] as Map,
-              )['nextCursor']?.toString())
+            ? (Map<String, dynamic>.from(raw['page'] as Map)['nextCursor']
+                  ?.toString())
             : null,
       ),
       cachedAt: _asDateTime(raw['cachedAt']),

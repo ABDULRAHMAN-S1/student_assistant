@@ -84,16 +84,18 @@ NotificationReadResult mapNotificationReadResult(Map<String, dynamic> json) {
   return NotificationReadResult(
     notification: notificationRaw is Map<String, dynamic>
         ? _mapNotification(notificationRaw)
-        : null,
+        : NotificationItem(
+            id: '',
+            category: '',
+            title: '',
+            message: '',
+            isRead: true,
+            priority: 0,
+            createdAt: null,
+          ),
     unreadCount: (json['unread_count'] as num?)?.toInt() ?? 0,
     status: (json['status'] ?? 'ok').toString(),
   );
-}
-
-NotificationReadResult mapNotificationReadResponse(
-  Map<String, dynamic> payload,
-) {
-  return mapNotificationReadResult(payload);
 }
 
 NotificationPreferences mapNotificationPreferences(Map<String, dynamic> json) {
@@ -135,7 +137,7 @@ NotificationRoute? _mapNotificationRoute(Object? raw) {
   final payload = raw['payload'];
   return NotificationRoute(
     type:
-        NotificationRouteTypeX.tryParse(type) ??
+        NotificationRouteTypeX.fromString(type) ??
         NotificationRouteType.engagement,
     payload: payload is Map<String, dynamic>
         ? Map<String, dynamic>.from(payload)

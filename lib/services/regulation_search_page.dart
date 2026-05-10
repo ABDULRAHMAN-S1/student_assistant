@@ -9,14 +9,14 @@ import '../features/ai_assistant/presentation/assistant_error_messages.dart';
 
 class RegulationSearchPage extends StatefulWidget {
   final bool isArabic;
-  final String? initialQuery;
   final Future<void> Function()? onSessionExpired;
+  final String initialQuery;
 
   const RegulationSearchPage({
     super.key,
     required this.isArabic,
-    this.initialQuery,
     this.onSessionExpired,
+    this.initialQuery = '',
   });
 
   @override
@@ -33,10 +33,23 @@ class _RegulationSearchPageState extends State<RegulationSearchPage> {
   @override
   void initState() {
     super.initState();
-    final query = widget.initialQuery?.trim();
-    if (query != null && query.isNotEmpty) {
-      _controller.text = query;
+    final initialQuery = widget.initialQuery.trim();
+    if (initialQuery.isEmpty) {
+      return;
     }
+    _controller.text = initialQuery;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) {
+        return;
+      }
+      _search();
+    });
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
   }
 
   bool get _isBackendOffline =>
@@ -426,9 +439,4 @@ class _RegulationSearchPageState extends State<RegulationSearchPage> {
     );
   }
 
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
 }

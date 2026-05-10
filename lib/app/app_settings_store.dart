@@ -56,6 +56,12 @@ class AppSettingsStore {
     return session.isAuthenticated ? session : null;
   }
 
+  String? readNotificationDeviceTokenId() {
+    final raw = _box.get(notificationDeviceTokenIdKey);
+    final value = raw?.toString().trim() ?? '';
+    return value.isEmpty ? null : value;
+  }
+
   Future<void> writeLanguageCode(String languageCode) {
     return _box.put(languageKey, languageCode);
   }
@@ -73,25 +79,17 @@ class AppSettingsStore {
     await writeIsLoggedIn(true);
   }
 
-  Future<void> clearAuthSession() async {
-    await _box.delete(authSessionKey);
-    await writeIsLoggedIn(false);
-  }
-
-  String? readNotificationDeviceTokenId() {
-    final raw = _box.get(notificationDeviceTokenIdKey);
-    if (raw == null) {
-      return null;
-    }
-    final text = raw.toString().trim();
-    return text.isEmpty ? null : text;
-  }
-
-  Future<void> writeNotificationDeviceTokenId(String? tokenId) async {
-    if (tokenId == null || tokenId.isEmpty) {
+  Future<void> writeNotificationDeviceTokenId(String? value) async {
+    final cleaned = value?.trim() ?? '';
+    if (cleaned.isEmpty) {
       await _box.delete(notificationDeviceTokenIdKey);
       return;
     }
-    await _box.put(notificationDeviceTokenIdKey, tokenId);
+    await _box.put(notificationDeviceTokenIdKey, cleaned);
+  }
+
+  Future<void> clearAuthSession() async {
+    await _box.delete(authSessionKey);
+    await writeIsLoggedIn(false);
   }
 }

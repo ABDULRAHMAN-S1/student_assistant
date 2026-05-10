@@ -4,7 +4,6 @@ import 'dart:io';
 
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 
@@ -43,10 +42,6 @@ class PushNotificationService {
 
   Future<void> initialize() async {
     if (_initialized) {
-      return;
-    }
-    if (kIsWeb) {
-      _initialized = true;
       return;
     }
     try {
@@ -115,9 +110,6 @@ class PushNotificationService {
   }
 
   Future<void> requestPermissionIfNeeded() async {
-    if (kIsWeb) {
-      return;
-    }
     if (!_initialized) {
       await initialize();
     }
@@ -139,9 +131,6 @@ class PushNotificationService {
     required BuildContext context,
     required bool isArabic,
   }) async {
-    if (kIsWeb) {
-      return;
-    }
     _repository = repository;
     _context = context;
     _isArabic = isArabic;
@@ -188,9 +177,6 @@ class PushNotificationService {
   Future<void> unregisterCurrentDevice({
     required EngagementRepository repository,
   }) async {
-    if (kIsWeb) {
-      return;
-    }
     _repository = repository;
     final existingTokenId = _registeredDeviceTokenId;
     _registeredToken = null;
