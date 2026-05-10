@@ -1,0 +1,81 @@
+{
+  "n_questions": 58,
+  "mean_cosine": 91.93,
+  "top_5": [
+    {
+      "question_id": 17,
+      "q": "كم المدة النظامية لصرف المكافآت الشهرية لطلبة الكليات؟",
+      "cosine": 99.0
+    },
+    {
+      "question_id": 22,
+      "q": "ما هي ساعات العمل الرسمية لاستقبال المستفيدين؟",
+      "cosine": 99.0
+    },
+    {
+      "question_id": 33,
+      "q": "كم عدد الفصول الدراسية التي يمكنني فيها الدراسة على نظام الزيارة؟",
+      "cosine": 99.0
+    },
+    {
+      "question_id": 55,
+      "q": "ماهي معايير القبول في الجامعة؟",
+      "cosine": 99.0
+    },
+    {
+      "question_id": 57,
+      "q": "هل الأولوية في القبول الجامعي للحاصلين على شهادة الثانوية العامة لهذا العام؟",
+      "cosine": 99.0
+    }
+  ],
+  "bottom_5": [
+    {
+      "question_id": 10,
+      "q": "ماهي آلية وشروط الاستفادة من القروض الطلابية؟",
+      "cosine": 60.88
+    },
+    {
+      "question_id": 34,
+      "q": "هل يتم احتساب درجات المقررات التي درستها بنظام الزيارة في جامعة أخرى ضمن المعدل التراكمي؟",
+      "cosine": 65.48
+    },
+    {
+      "question_id": 25,
+      "q": "ماهي شروط القبول بالسكن الداخلي؟",
+      "cosine": 67.21
+    },
+    {
+      "question_id": 35,
+      "q": "هل يستطيع الطالب المنذر أكاديمياً الدراسة على نظام الزيارة؟",
+      "cosine": 75.58
+    },
+    {
+      "question_id": 40,
+      "q": "هل يمكن التقديم للتحويل إن كانت حالتي الدراسية معتذراً أو مؤجلاً؟",
+      "cosine": 75.58
+    }
+  ],
+  "standard_cosine_metric": {
+    "version": 1,
+    "method_id": "embedding_l2_normalized_dot_times_100",
+    "implementation": "backend/app/embed_similarity.py + SentenceTransformer (EMBEDDING_MODEL)",
+    "scale": "0–100 (%), cosine = dot(normalized_emb_a, normalized_emb_b), clipped to [0,100]",
+    "tf_idf_used": false,
+    "e5_models": "If embedding model name contains \"e5\": query-side uses normalize_query() (prepends \"query: \"); passage/chunk texts use prefix \"passage: \" to align with vectordb indexing.",
+    "recommended_cover_sheet_alignment_metric": {
+      "metric_id": "answer_vs_retrieved_chunk",
+      "description_ar": "تشابه تضمين بين إجابة FAQ المرجعية والمقطع النصي الأقرب من المدونة الخام (ليست أسئلة Q↔Q).",
+      "typical_csv_column": "cosine_similarity_pct",
+      "typical_scripts": [
+        "eval_faq_gold_vs_corpus.py"
+      ]
+    },
+    "this_report": {
+      "script": "eval_faq_paraphrase_tfidf.py",
+      "compared_pair_id": "reference_answer_vs_paraphrase_generated_answer",
+      "pair_label_ar": "إجابة FAQ المرجعية مقابل إجابة مُولّدة بإعادة صياغة/ترجمة عكسية (paraphrase similarity، ليس answer↔chunk).",
+      "primary_value_csv_column": "cosine_similarity_pct",
+      "mean_summary_json_field": "mean_cosine"
+    }
+  }
+}

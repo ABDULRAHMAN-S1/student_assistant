@@ -1,0 +1,85 @@
+{
+  "source": "D:\\student_assistant\\backend\\data\\raw\\faq.txt",
+  "pairs_total": 58,
+  "excluded_tiny_answers": 6,
+  "evaluated_count": 52,
+  "mean_cosine_pct": 77.42,
+  "top_5": [
+    {
+      "question_id": 53,
+      "question": "ماهي التخصصات المتاحة للقبول بالجامعة؟",
+      "cosine_pct": 95.67
+    },
+    {
+      "question_id": 2,
+      "question": "كيف أقوم بطلب بنر (سلايدر) رئيسي متحرك على موقع الجامعة؟",
+      "cosine_pct": 93.95
+    },
+    {
+      "question_id": 4,
+      "question": "أريد إضافة (الصفر) إلى التحويلة؟",
+      "cosine_pct": 93.91
+    },
+    {
+      "question_id": 12,
+      "question": "ماهي آلية وشروط الاستفادة من الاعانة الطلابية؟",
+      "cosine_pct": 93.27
+    },
+    {
+      "question_id": 15,
+      "question": "ماهي الحالات التي لا تصرف فيها المكافأة؟",
+      "cosine_pct": 92.21
+    }
+  ],
+  "bottom_5": [
+    {
+      "question_id": 27,
+      "question": "هل يحق لطلبة المنح الداخلية التقديم على التخصصات الصحية؟",
+      "cosine_pct": 29.7
+    },
+    {
+      "question_id": 19,
+      "question": "ماهي إجراءات القبول في السكن الجامعي؟",
+      "cosine_pct": 29.73
+    },
+    {
+      "question_id": 56,
+      "question": "طالب سجل العام الماضي ولم يتم قبوله، هل يمكن التسجيل من التقديم القديم أم يلزم التقديم من جديد؟",
+      "cosine_pct": 42.46
+    },
+    {
+      "question_id": 25,
+      "question": "ماهي شروط القبول بالسكن الداخلي؟",
+      "cosine_pct": 44.14
+    },
+    {
+      "question_id": 33,
+      "question": "كم عدد الفصول الدراسية التي يمكنني فيها الدراسة على نظام الزيارة؟",
+      "cosine_pct": 47.99
+    }
+  ],
+  "pseudo_reference_note": "Pseudo-reference مولّد آلياً من شطر/ملخص إجابة faq.txt وليس مرجعاً بشرياً معتمداً",
+  "standard_cosine_metric": {
+    "version": 1,
+    "method_id": "embedding_l2_normalized_dot_times_100",
+    "implementation": "backend/app/embed_similarity.py + SentenceTransformer (EMBEDDING_MODEL)",
+    "scale": "0–100 (%), cosine = dot(normalized_emb_a, normalized_emb_b), clipped to [0,100]",
+    "tf_idf_used": false,
+    "e5_models": "If embedding model name contains \"e5\": query-side uses normalize_query() (prepends \"query: \"); passage/chunk texts use prefix \"passage: \" to align with vectordb indexing.",
+    "recommended_cover_sheet_alignment_metric": {
+      "metric_id": "answer_vs_retrieved_chunk",
+      "description_ar": "تشابه تضمين بين إجابة FAQ المرجعية والمقطع النصي الأقرب من المدونة الخام (ليست أسئلة Q↔Q).",
+      "typical_csv_column": "cosine_similarity_pct",
+      "typical_scripts": [
+        "eval_faq_gold_vs_corpus.py"
+      ]
+    },
+    "this_report": {
+      "script": "faq_pseudo_gen_cosine.py",
+      "compared_pair_id": "pseudo_reference_segment_vs_generated_segment",
+      "pair_label_ar": "شطر مرجعي اصطناعي (pseudo) مقابل شطر مولّد/بديل من نفس الإجابة؛ ليس Q↔A ولا answer↔chunk.",
+      "primary_value_csv_column": "cosine_similarity_pct",
+      "mean_summary_json_field": "mean_cosine_pct"
+    }
+  }
+}

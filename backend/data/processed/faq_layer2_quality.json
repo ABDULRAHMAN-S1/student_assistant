@@ -1,0 +1,41 @@
+{
+  "source_rows": "D:\\student_assistant\\backend\\data\\processed\\faq_ref_natural_v2_tfidf.csv",
+  "embedding_model": "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
+  "n": 58,
+  "mean_cosine_pct": 65.44,
+  "mean_overall_quality": 4.12,
+  "count_high_cosine_low_quality": 0,
+  "count_low_cosine_high_quality": 4,
+  "top_3_system_issues": [
+    "تداخل: تشابه نصي منخفض لكن تقدير دلالي/شكلي أوفر؛ راجع الاعتماد على Cosine وحدفه",
+    "اعتماد التضمين لمعنى الصحة يلزم الاستكمال بعينة بشرية للإنتاج",
+    "تكرار بادئات/صيغ قد يرفع الضوضاء دون مضمون إضافي"
+  ],
+  "standard_cosine_metric": {
+    "version": 1,
+    "method_id": "embedding_l2_normalized_dot_times_100",
+    "implementation": "backend/app/embed_similarity.py + SentenceTransformer (EMBEDDING_MODEL)",
+    "scale": "0–100 (%), cosine = dot(normalized_emb_a, normalized_emb_b), clipped to [0,100]",
+    "tf_idf_used": false,
+    "e5_models": "If embedding model name contains \"e5\": query-side uses normalize_query() (prepends \"query: \"); passage/chunk texts use prefix \"passage: \" to align with vectordb indexing.",
+    "recommended_cover_sheet_alignment_metric": {
+      "metric_id": "answer_vs_retrieved_chunk",
+      "description_ar": "تشابه تضمين بين إجابة FAQ المرجعية والمقطع النصي الأقرب من المدونة الخام (ليست أسئلة Q↔Q).",
+      "typical_csv_column": "cosine_similarity_pct",
+      "typical_scripts": [
+        "eval_faq_gold_vs_corpus.py"
+      ]
+    },
+    "this_report": {
+      "script": "eval_faq_layer2_quality.py",
+      "compared_pair_id": "reference_answer_vs_paraphrase_generated_answer",
+      "pair_label_ar": "طبقة ثانية: متوسط cosine_similarity_pct من ملف الطبقة الأولى؛ correctness_score يستخدم تضمين المرجع والمولّد (نفس EMBEDDING_MODEL) ولا يُخلَط مع عمود التقرير دون توضيح.",
+      "primary_value_csv_column": "cosine_similarity_pct (من الملف المدخل)",
+      "mean_summary_json_field": "mean_cosine_pct",
+      "auxiliary_columns_or_fields": {
+        "upstream_csv": "D:\\student_assistant\\backend\\data\\processed\\faq_ref_natural_v2_tfidf.csv",
+        "correctness_embedding": "encode_texts_as_passages(reference_answer) vs encode_texts_as_passages(generated_answer)"
+      }
+    }
+  }
+}

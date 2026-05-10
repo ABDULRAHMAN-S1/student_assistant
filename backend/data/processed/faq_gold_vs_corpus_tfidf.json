@@ -1,0 +1,112 @@
+{
+  "reference_gold_file": "D:\\student_assistant\\backend\\data\\raw\\faq.txt",
+  "corpus_loader": "jsonl",
+  "chunks_jsonl": "D:\\student_assistant\\backend\\data\\processed\\taibah_regulations.jsonl",
+  "chunk_text_mode": "content",
+  "comparison_source_files": [
+    "general_education_elective_courses_policy_cleaned.txt",
+    "pharmd_student_guide_ar_cleaned.txt",
+    "taibah_academic_regulations_ar.txt.txt",
+    "taibah_dress_code_ar.txt",
+    "taibah_student_conduct_and_discipline_rules_ar.txt.txt",
+    "taibah_student_housing_rules_ar.txt",
+    "تنظيم تقديم الشكاوى وضمان العدالة والشفافية للطلاب با الانجليزي.txt",
+    "تنظيم تقديم الشكاوى وضمان العدالة والشفافية للطلاب بالعربي.txt",
+    "دليل القبول.txt",
+    "دليل المقرارات العامه.txt",
+    "دليل شروط و إجراءات الدراسة بنظام الزيارة بجامعة طيبة.txt"
+  ],
+  "total_reference_questions": 58,
+  "evaluated_count": 58,
+  "excluded_count": 0,
+  "mean_cosine_pct": 56.05,
+  "selection_policy": "all_chunks_where_question_cos_ge_threshold_then_argmax_answer_cosine",
+  "rerank_top_k_legacy_unused": 80,
+  "answer_cand_top_m_legacy_unused": 100,
+  "faq_min_q_chunk_cosine": 0.1,
+  "answer_embed_agg": "max_sentence",
+  "top_5": [
+    {
+      "question_id": 25,
+      "question": "ماهي شروط القبول بالسكن الداخلي؟",
+      "cosine_pct": 77.69
+    },
+    {
+      "question_id": 10,
+      "question": "ماهي آلية وشروط الاستفادة من القروض الطلابية؟",
+      "cosine_pct": 77.55
+    },
+    {
+      "question_id": 15,
+      "question": "ماهي الحالات التي لا تصرف فيها المكافأة؟",
+      "cosine_pct": 75.64
+    },
+    {
+      "question_id": 54,
+      "question": "ماهي آلية المفاضلة في القبول؟",
+      "cosine_pct": 72.47
+    },
+    {
+      "question_id": 19,
+      "question": "ماهي إجراءات القبول في السكن الجامعي؟",
+      "cosine_pct": 72.03
+    }
+  ],
+  "bottom_5": [
+    {
+      "question_id": 36,
+      "question": "هل يمكن تغيير طلبي بعد إغلاق بوابة التحويل؟",
+      "cosine_pct": 30.74
+    },
+    {
+      "question_id": 35,
+      "question": "هل يستطيع الطالب المنذر أكاديمياً الدراسة على نظام الزيارة؟",
+      "cosine_pct": 31.82
+    },
+    {
+      "question_id": 40,
+      "question": "هل يمكن التقديم للتحويل إن كانت حالتي الدراسية معتذراً أو مؤجلاً؟",
+      "cosine_pct": 31.82
+    },
+    {
+      "question_id": 37,
+      "question": "هل يمكن التقديم للتحويل من الكليات التطبيقية (دبلوم) إلى الكليات الأخرى أو العكس؟",
+      "cosine_pct": 32.65
+    },
+    {
+      "question_id": 38,
+      "question": "هل يمكن التقديم للتحويل إن كانت حالتي الدراسية زائراً؟",
+      "cosine_pct": 32.65
+    }
+  ],
+  "methodology": "Chunks from data\\processed\\taibah_regulations.jsonl excluding faq.txt; passage text mode=content (content matches embed_store indexing when mode=content). Answer–chunk similarity embedding_agg=max_sentence (passage = full reference answer; max_sentence = max over sentence splits). Eligible = all chunks with cosine(question,chunk)>=0.1000; pick argmax answer–chunk score over eligible. Corpus chunks count=518.",
+  "standard_cosine_metric": {
+    "version": 1,
+    "method_id": "embedding_l2_normalized_dot_times_100",
+    "implementation": "backend/app/embed_similarity.py + SentenceTransformer (EMBEDDING_MODEL)",
+    "scale": "0–100 (%), cosine = dot(normalized_emb_a, normalized_emb_b), clipped to [0,100]",
+    "tf_idf_used": false,
+    "e5_models": "If embedding model name contains \"e5\": query-side uses normalize_query() (prepends \"query: \"); passage/chunk texts use prefix \"passage: \" to align with vectordb indexing.",
+    "recommended_cover_sheet_alignment_metric": {
+      "metric_id": "answer_vs_retrieved_chunk",
+      "description_ar": "تشابه تضمين بين إجابة FAQ المرجعية والمقطع النصي الأقرب من المدونة الخام (ليست أسئلة Q↔Q).",
+      "typical_csv_column": "cosine_similarity_pct",
+      "typical_scripts": [
+        "eval_faq_gold_vs_corpus.py"
+      ]
+    },
+    "this_report": {
+      "script": "eval_faq_gold_vs_corpus.py",
+      "compared_pair_id": "answer_vs_retrieved_chunk",
+      "pair_label_ar": "أقصى تشابه تضمين بين أي جملة من إجابة FAQ المرجعية والمقطع المختار (بعد بوابة تشابه السؤال مع المقطع).",
+      "primary_value_csv_column": "cosine_similarity_pct",
+      "mean_summary_json_field": "mean_cosine_pct",
+      "auxiliary_columns_or_fields": {
+        "q_chunk_match_pct_pair_id": "question_vs_retrieved_chunk",
+        "q_chunk_note_ar": "عمود q_chunk_match_pct يقيس تشابه السؤال مع نفس المقطع (retrieval cue) وليس نفس تعريف mean_cosine_pct.",
+        "answer_rerank_ar": "Eligible=all chunks meeting FAQ_MIN_Q_CHUNK_EMB on question-chunk cosine; chosen chunk=max answer-chunk score over eligible (full corpus scan). RERANK_TOP_K / FAQ_ANSWER_CAND_TOP_M are legacy unused in this selection.",
+        "answer_embedding_agg": "max_sentence"
+      }
+    }
+  }
+}

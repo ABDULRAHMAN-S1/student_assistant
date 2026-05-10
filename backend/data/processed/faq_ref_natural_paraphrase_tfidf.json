@@ -1,0 +1,81 @@
+{
+  "n": 58,
+  "mean_cosine": 94.22,
+  "top_5": [
+    {
+      "question_id": 6,
+      "q": "أريد تغيير كلمة مرور الخدمات الذاتية؟",
+      "cosine": 100.0
+    },
+    {
+      "question_id": 11,
+      "q": "ماهي المستندات المطلوب ارفاقها للحصول على الاعانة؟",
+      "cosine": 100.0
+    },
+    {
+      "question_id": 17,
+      "q": "كم المدة النظامية لصرف المكافآت الشهرية لطلبة الكليات؟",
+      "cosine": 100.0
+    },
+    {
+      "question_id": 27,
+      "q": "هل يحق لطلبة المنح الداخلية التقديم على التخصصات الصحية؟",
+      "cosine": 100.0
+    },
+    {
+      "question_id": 33,
+      "q": "كم عدد الفصول الدراسية التي يمكنني فيها الدراسة على نظام الزيارة؟",
+      "cosine": 100.0
+    }
+  ],
+  "bottom_5": [
+    {
+      "question_id": 25,
+      "q": "ماهي شروط القبول بالسكن الداخلي؟",
+      "cosine": 48.1
+    },
+    {
+      "question_id": 19,
+      "q": "ماهي إجراءات القبول في السكن الجامعي؟",
+      "cosine": 56.99
+    },
+    {
+      "question_id": 14,
+      "q": "هل يصرف لطلبة ذوي الإعاقة مكافأة؟",
+      "cosine": 82.7
+    },
+    {
+      "question_id": 1,
+      "q": "ماهو نظام القبول في الجامعة وماذا يعني القبول السنوي؟",
+      "cosine": 84.44
+    },
+    {
+      "question_id": 31,
+      "q": "هل من الممكن تحديد موعد قبول المنح (الخارجية - الداخلية)؟",
+      "cosine": 84.84
+    }
+  ],
+  "standard_cosine_metric": {
+    "version": 1,
+    "method_id": "embedding_l2_normalized_dot_times_100",
+    "implementation": "backend/app/embed_similarity.py + SentenceTransformer (EMBEDDING_MODEL)",
+    "scale": "0–100 (%), cosine = dot(normalized_emb_a, normalized_emb_b), clipped to [0,100]",
+    "tf_idf_used": false,
+    "e5_models": "If embedding model name contains \"e5\": query-side uses normalize_query() (prepends \"query: \"); passage/chunk texts use prefix \"passage: \" to align with vectordb indexing.",
+    "recommended_cover_sheet_alignment_metric": {
+      "metric_id": "answer_vs_retrieved_chunk",
+      "description_ar": "تشابه تضمين بين إجابة FAQ المرجعية والمقطع النصي الأقرب من المدونة الخام (ليست أسئلة Q↔Q).",
+      "typical_csv_column": "cosine_similarity_pct",
+      "typical_scripts": [
+        "eval_faq_gold_vs_corpus.py"
+      ]
+    },
+    "this_report": {
+      "script": "eval_faq_natural_paraphrase_tfidf.py",
+      "compared_pair_id": "reference_answer_vs_paraphrase_generated_answer",
+      "pair_label_ar": "إجابة مرجعية مقابل إعادة صياغة طبيعية معتدلة (paraphrase؛ ليس answer↔chunk).",
+      "primary_value_csv_column": "cosine_similarity_pct",
+      "mean_summary_json_field": "mean_cosine"
+    }
+  }
+}

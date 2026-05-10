@@ -1,0 +1,82 @@
+{
+  "n": 58,
+  "mean_cosine": 65.44,
+  "count_broken_100_risk": 28,
+  "top_5": [
+    {
+      "question_id": 34,
+      "q": "هل يتم احتساب درجات المقررات التي درستها بنظام الزيارة في جامعة أخرى ضمن المعدل التراكمي؟",
+      "cosine": 92.59
+    },
+    {
+      "question_id": 15,
+      "q": "ماهي الحالات التي لا تصرف فيها المكافأة؟",
+      "cosine": 85.26
+    },
+    {
+      "question_id": 37,
+      "q": "هل يمكن التقديم للتحويل من الكليات التطبيقية (دبلوم) إلى الكليات الأخرى أو العكس؟",
+      "cosine": 79.14
+    },
+    {
+      "question_id": 38,
+      "q": "هل يمكن التقديم للتحويل إن كانت حالتي الدراسية زائراً؟",
+      "cosine": 79.14
+    },
+    {
+      "question_id": 39,
+      "q": "هل يمكن التقديم للتحويل إن كانت حالتي الدراسية طي قيد؟",
+      "cosine": 79.14
+    }
+  ],
+  "bottom_5": [
+    {
+      "question_id": 52,
+      "q": "طالب تأخر في ترتيب الرغبات في الموعد المحدد؟",
+      "cosine": 19.7
+    },
+    {
+      "question_id": 46,
+      "q": "هل يمكن التحويل من الكليات النظرية إلى الكليات العلمية؟",
+      "cosine": 20.87
+    },
+    {
+      "question_id": 58,
+      "q": "هل هناك ميزة لمن قدم في اليوم الأول أو اليوم التالي أو اليوم الأخير، حسب الجدول الزمني؟",
+      "cosine": 27.88
+    },
+    {
+      "question_id": 22,
+      "q": "ما هي ساعات العمل الرسمية لاستقبال المستفيدين؟",
+      "cosine": 33.91
+    },
+    {
+      "question_id": 45,
+      "q": "هل يوجد اختبار قبول أو مقابلة شخصية للتحويل؟ وكيف أعلم بذلك؟",
+      "cosine": 41.78
+    }
+  ],
+  "standard_cosine_metric": {
+    "version": 1,
+    "method_id": "embedding_l2_normalized_dot_times_100",
+    "implementation": "backend/app/embed_similarity.py + SentenceTransformer (EMBEDDING_MODEL)",
+    "scale": "0–100 (%), cosine = dot(normalized_emb_a, normalized_emb_b), clipped to [0,100]",
+    "tf_idf_used": false,
+    "e5_models": "If embedding model name contains \"e5\": query-side uses normalize_query() (prepends \"query: \"); passage/chunk texts use prefix \"passage: \" to align with vectordb indexing.",
+    "recommended_cover_sheet_alignment_metric": {
+      "metric_id": "answer_vs_retrieved_chunk",
+      "description_ar": "تشابه تضمين بين إجابة FAQ المرجعية والمقطع النصي الأقرب من المدونة الخام (ليست أسئلة Q↔Q).",
+      "typical_csv_column": "cosine_similarity_pct",
+      "typical_scripts": [
+        "eval_faq_gold_vs_corpus.py"
+      ]
+    },
+    "this_report": {
+      "script": "eval_faq_natural_paraphrase_v2_tfidf.py",
+      "compared_pair_id": "reference_answer_vs_paraphrase_generated_answer",
+      "pair_label_ar": "إجابة مرجعية مقابل إعادة صياغة v2 مع ضبط سقف تشابه (paraphrase؛ ليس answer↔chunk).",
+      "primary_value_csv_column": "cosine_similarity_pct",
+      "mean_summary_json_field": "mean_cosine"
+    }
+  }
+}
